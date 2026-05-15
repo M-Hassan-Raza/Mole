@@ -281,6 +281,31 @@ EOF
     status_col=$(awk -F'\t' 'END { print $4 }' "$MOLE_DELETE_LOG")
     [ "$mode_col" = "surprise" ]
     [ "$status_col" = "invalid-mode" ]
+    [[ "$output" == *'expected "permanent" or "trash"'* ]]
+}
+
+@test "mole_delete warns once for repeated invalid delete mode" {
+    local first="$SANDBOX/invalid_mode_first"
+    local second="$SANDBOX/invalid_mode_second"
+    : > "$first"
+    : > "$second"
+
+    run bash --noprofile --norc <<EOF
+$(prelude)
+export MOLE_DELETE_MODE=surprise
+set +e
+mole_delete "$first"
+first_rc=\$?
+mole_delete "$second"
+second_rc=\$?
+set -e
+[[ \$first_rc -ne 0 && \$second_rc -ne 0 ]]
+EOF
+
+    [ "$status" -eq 0 ]
+    [[ -e "$first" ]]
+    [[ -e "$second" ]]
+    [[ "$(grep -c 'invalid MOLE_DELETE_MODE' <<< "$output")" -eq 1 ]]
 }
 
 @test "mole_delete trash failure leaves target in place" {
@@ -309,6 +334,37 @@ EOF
     status_col=$(awk -F'\t' 'END { print $4 }' "$MOLE_DELETE_LOG")
     [ "$status_col" = "trash-failed" ]
     [[ "$output" == *"refusing permanent delete"* ]]
+}
+
+@test "mole_delete warns once for repeated Trash failures" {
+    local first="$SANDBOX/trash_fail_first"
+    local second="$SANDBOX/trash_fail_second"
+    : > "$first"
+    : > "$second"
+
+    local blocked="$SANDBOX/blocked/Trash"
+    mkdir -p "$(dirname "$blocked")"
+    chmod 0555 "$(dirname "$blocked")"
+
+    run bash --noprofile --norc <<EOF
+$(prelude)
+export MOLE_DELETE_MODE=trash
+export MOLE_TEST_TRASH_DIR="$blocked"
+set +e
+mole_delete "$first"
+first_rc=\$?
+mole_delete "$second"
+second_rc=\$?
+set -e
+[[ \$first_rc -ne 0 && \$second_rc -ne 0 ]]
+EOF
+
+    chmod 0755 "$(dirname "$blocked")"
+
+    [ "$status" -eq 0 ]
+    [[ -e "$first" ]]
+    [[ -e "$second" ]]
+    [[ "$(grep -c "Trash unavailable" <<< "$output")" -eq 1 ]]
 }
 
 @test "mole_delete records 'unknown' (not 0) when size measurement fails" {

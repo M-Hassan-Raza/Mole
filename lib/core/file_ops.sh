@@ -456,8 +456,12 @@ mole_delete() {
     case "$mode" in
         permanent | trash) ;;
         *)
-            _mole_delete_log "$mode" "0" "invalid-mode" "$path"
-            printf 'Error: invalid MOLE_DELETE_MODE: %s\n' "$mode" >&2
+            _mole_delete_log "$mode" "unknown" "invalid-mode" "$path"
+            if [[ -z "${_MOLE_INVALID_MODE_WARNED:-}" ]]; then
+                _MOLE_INVALID_MODE_WARNED=1
+                export _MOLE_INVALID_MODE_WARNED
+                printf 'Error: invalid MOLE_DELETE_MODE: %s (expected "permanent" or "trash")\n' "$mode" >&2
+            fi
             return 1
             ;;
     esac
@@ -523,7 +527,11 @@ mole_delete() {
         fi
         _mole_delete_log "trash" "$size_kb" "trash-failed" "$path"
         log_operation "${MOLE_CURRENT_COMMAND:-uninstall}" "SKIPPED" "$path" "trash-failed"
-        printf 'Error: Trash unavailable; refusing permanent delete. Use --permanent to delete immediately.\n' >&2
+        if [[ -z "${_MOLE_TRASH_UNAVAILABLE_WARNED:-}" ]]; then
+            _MOLE_TRASH_UNAVAILABLE_WARNED=1
+            export _MOLE_TRASH_UNAVAILABLE_WARNED
+            printf 'Error: Trash unavailable; refusing permanent delete. Use --permanent to delete immediately.\n' >&2
+        fi
         debug_log "Trash move failed, refusing permanent delete: $path"
         return 1
     fi
