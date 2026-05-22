@@ -63,7 +63,7 @@ format_duration_human() {
 # Path Validation
 # ============================================================================
 
-_mole_deletion_policy_path() {
+_mole_normalize_deletion_policy_path() {
     local path="$1"
     local slash="/"
     local double_slash="//"
@@ -76,6 +76,7 @@ _mole_deletion_policy_path() {
     [[ -n "$trimmed" ]] && printf '%s\n' "$trimmed" || printf '%s\n' "$path"
 }
 
+# Deletion policy only. App/data protection stays in app_protection.sh.
 _mole_is_critical_deletion_path() {
     local path="$1"
 
@@ -139,7 +140,7 @@ validate_path_for_deletion() {
     fi
 
     local policy_path
-    policy_path=$(_mole_deletion_policy_path "$path")
+    policy_path=$(_mole_normalize_deletion_policy_path "$path")
 
     # Check symlink target if path is a symbolic link
     if [[ -L "$path" ]]; then
@@ -159,7 +160,7 @@ validate_path_for_deletion() {
 
         # Validate resolved target against protected paths
         if [[ -n "$resolved_target" ]]; then
-            resolved_target=$(_mole_deletion_policy_path "$resolved_target")
+            resolved_target=$(_mole_normalize_deletion_policy_path "$resolved_target")
             if _mole_is_critical_deletion_path "$resolved_target"; then
                 log_error "Symlink points to protected system path: $path -> $resolved_target"
                 return 1

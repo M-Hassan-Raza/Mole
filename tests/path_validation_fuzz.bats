@@ -75,6 +75,22 @@ EOF
     [ "$rejected" -ge 50 ]
 }
 
+@test "generated control-character paths are rejected" {
+    run bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+validate_path_for_deletion $'/Users/me/with\nnewline'
+EOF
+    [ "$status" -eq 1 ]
+
+    run bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+validate_path_for_deletion $'/Users/me/with\tab'
+EOF
+    [ "$status" -eq 1 ]
+}
+
 @test "corpus has minimum coverage" {
     local active
     active=$(grep -cvE '^\s*(#|$)' "$CORPUS")

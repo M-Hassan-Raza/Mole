@@ -106,6 +106,9 @@ teardown() {
 @test "validate_path_for_deletion accepts valid path" {
     run bash -c "source '$PROJECT_ROOT/lib/core/common.sh'; validate_path_for_deletion '$TEST_DIR/valid'"
     [ "$status" -eq 0 ]
+
+    run bash -c "source '$PROJECT_ROOT/lib/core/common.sh'; validate_path_for_deletion '$HOME/Library/Caches/com.example.app/cache.db'"
+    [ "$status" -eq 0 ]
 }
 
 @test "validate_path_for_deletion allows Darwin C cache shards but rejects protected extension paths" {
