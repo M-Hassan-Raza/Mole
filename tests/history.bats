@@ -101,6 +101,31 @@ assert data["deletions"][1]["path"] == "/tmp/Old App.app"
     [[ "$output" == *"No deletion audit entries yet"* ]]
 }
 
+@test "mo history does not create logs when none exist" {
+    rm -rf "$HOME/Library"
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No operation history yet"* ]]
+    [ ! -e "$HOME/Library/Logs/mole/operations.log" ]
+    [ ! -e "$HOME/Library/Logs/mole/mole.log" ]
+}
+
+@test "mo history early dispatch respects source guard" {
+    # shellcheck disable=SC2016
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" bash --noprofile --norc -c '
+set -euo pipefail
+set -- history
+MOLE_TEST_MODE=1
+MOLE_SKIP_MAIN=1
+source "$PROJECT_ROOT/mole"
+echo sourced
+'
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"sourced"* ]]
+    [[ "$output" != *"Mole History"* ]]
+}
+
 @test "mo history rejects unknown options" {
     run env HOME="$HOME" "$PROJECT_ROOT/mole" history --bad-option
     [ "$status" -eq 1 ]

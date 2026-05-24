@@ -7,6 +7,15 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+if [[ ! ("${MOLE_TEST_MODE:-0}" == "1" && "${MOLE_SKIP_MAIN:-0}" == "1") ]]; then
+    if [[ "${1:-}" == "history" ]]; then
+        exec "$SCRIPT_DIR/bin/history.sh" "${@:2}"
+    fi
+    if [[ "${1:-}" == "--debug" && "${2:-}" == "history" ]]; then
+        exec "$SCRIPT_DIR/bin/history.sh" "${@:3}"
+    fi
+fi
+
 source "$SCRIPT_DIR/lib/core/common.sh"
 source "$SCRIPT_DIR/lib/core/commands.sh"
 
