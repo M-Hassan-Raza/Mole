@@ -128,6 +128,20 @@ assert data["deletions"][0]["path"] == "/tmp/unicode-\u96ea-quote\"slash\\tab\tb
     [[ "$output" == *"No deletion audit entries yet"* ]]
 }
 
+@test "mo history tolerates malformed session summaries" {
+    cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
+# ========== clean session started at 2026-05-24 10:00:00 ==========
+[2026-05-24 10:00:01] [clean] REMOVED /tmp/cache (2KB)
+# ========== clean session ended at malformed summary ==========
+EOF
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"clean      2026-05-24 10:00:00, 0 items, 0B"* ]]
+    [[ "$output" == *"removed 1, ended malformed summary"* ]]
+    [[ "$output" != *"malformed summary items"* ]]
+}
+
 @test "mo history does not create logs when none exist" {
     rm -rf "$HOME/Library"
 

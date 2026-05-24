@@ -59,7 +59,7 @@ history_deletions_log_file() {
 
 history_normalize_limit() {
     local value="${1:-$MOLE_HISTORY_DEFAULT_LIMIT}"
-    local normalized
+    local normalized max_digits
 
     if ! normalized=$(history_normalize_decimal "$value"); then
         printf '%s\n' "$MOLE_HISTORY_DEFAULT_LIMIT"
@@ -69,7 +69,12 @@ history_normalize_limit() {
         printf '%s\n' "$MOLE_HISTORY_DEFAULT_LIMIT"
         return 0
     fi
-    if [[ "${#normalized}" -gt 3 || "$normalized" -gt "$MOLE_HISTORY_MAX_LIMIT" ]]; then
+    max_digits=${#MOLE_HISTORY_MAX_LIMIT}
+    if [[ "${#normalized}" -gt "$max_digits" ]]; then
+        printf '%s\n' "$MOLE_HISTORY_MAX_LIMIT"
+        return 0
+    fi
+    if [[ "$normalized" -gt "$MOLE_HISTORY_MAX_LIMIT" ]]; then
         printf '%s\n' "$MOLE_HISTORY_MAX_LIMIT"
         return 0
     fi
@@ -88,11 +93,12 @@ history_normalize_decimal() {
 
 history_parse_limit() {
     local value="$1"
-    local normalized
+    local normalized max_digits
 
     normalized=$(history_normalize_decimal "$value") || return 1
     [[ "$normalized" != "0" ]] || return 1
-    [[ "${#normalized}" -le 3 ]] || return 1
+    max_digits=${#MOLE_HISTORY_MAX_LIMIT}
+    [[ "${#normalized}" -le "$max_digits" ]] || return 1
     [[ "$normalized" -le "$MOLE_HISTORY_MAX_LIMIT" ]] || return 1
     printf '%s\n' "$normalized"
 }
@@ -120,18 +126,9 @@ history_start_session() {
         history_finish_session
     fi
 
+    history_reset_active_session
     HISTORY_ACTIVE_COMMAND="$command"
     HISTORY_ACTIVE_STARTED_AT="$started_at"
-    HISTORY_ACTIVE_ENDED_AT=""
-    HISTORY_ACTIVE_ITEMS=0
-    HISTORY_ACTIVE_SIZE="0B"
-    HISTORY_ACTIVE_REMOVED=0
-    HISTORY_ACTIVE_TRASHED=0
-    HISTORY_ACTIVE_SKIPPED=0
-    HISTORY_ACTIVE_FAILED=0
-    HISTORY_ACTIVE_REBUILT=0
-    HISTORY_ACTIVE_OTHER=0
-    HISTORY_ACTIVE_OPERATIONS=0
 }
 
 history_finish_session() {
@@ -201,10 +198,17 @@ history_parse_session_end() {
     command="${inner%% session ended at *}"
     rest="${inner#* session ended at }"
     rest="${rest%" =========="}"
-    ended_at="${rest%%, *}"
-    tail="${rest#"$ended_at, "}"
-    items="${tail%% items,*}"
-    size="${tail#*, }"
+    ended_at="$rest"
+    items=""
+    size=""
+    if [[ "$rest" == *", "* ]]; then
+        ended_at="${rest%%, *}"
+        tail="${rest#"$ended_at, "}"
+        if [[ "$tail" == *" items, "* ]]; then
+            items="${tail%% items,*}"
+            size="${tail#*, }"
+        fi
+    fi
 
     if [[ -z "$HISTORY_ACTIVE_COMMAND" ]]; then
         history_start_session "$command" "$ended_at"
@@ -236,10 +240,7 @@ history_parse_operation_line() {
     return 0
 }
 
-history_load_operations() {
-    local log_file="$1"
-    local line
-
+history_reset_sessions() {
     history_reset_active_session
     HISTORY_SESSION_COMMANDS=()
     HISTORY_SESSION_STARTED_AT=()
@@ -253,6 +254,21 @@ history_load_operations() {
     HISTORY_SESSION_REBUILT=()
     HISTORY_SESSION_OTHER=()
     HISTORY_SESSION_OPERATIONS=()
+}
+
+history_reset_deletions() {
+    HISTORY_DELETE_TIMESTAMPS=()
+    HISTORY_DELETE_MODES=()
+    HISTORY_DELETE_SIZE_KB=()
+    HISTORY_DELETE_STATUSES=()
+    HISTORY_DELETE_PATHS=()
+}
+
+history_load_operations() {
+    local log_file="$1"
+    local line
+
+    history_reset_sessions
 
     [[ -f "$log_file" ]] || return 0
 
@@ -271,11 +287,7 @@ history_load_deletions() {
     local log_file="$1"
     local line timestamp mode size_kb status path
 
-    HISTORY_DELETE_TIMESTAMPS=()
-    HISTORY_DELETE_MODES=()
-    HISTORY_DELETE_SIZE_KB=()
-    HISTORY_DELETE_STATUSES=()
-    HISTORY_DELETE_PATHS=()
+    history_reset_deletions
 
     [[ -f "$log_file" ]] || return 0
 
@@ -369,6 +381,26 @@ history_json_string() {
     printf '"'
 }
 
+history_json_string_field() {
+    local indent="$1"
+    local key="$2"
+    local value="${3:-}"
+    local suffix="${4-,}"
+
+    printf '%s"%s": ' "$indent" "$key"
+    history_json_string "$value"
+    printf '%s\n' "$suffix"
+}
+
+history_json_number_field() {
+    local indent="$1"
+    local key="$2"
+    local value="$3"
+    local suffix="${4-,}"
+
+    printf '%s"%s": %s%s\n' "$indent" "$key" "$value" "$suffix"
+}
+
 history_render_text() {
     local limit
     limit=$(history_normalize_limit "${1:-$MOLE_HISTORY_DEFAULT_LIMIT}")
@@ -448,20 +480,12 @@ history_render_json_sessions() {
         while [[ "$idx" -ge "$start" ]]; do
             [[ "$emitted" -gt 0 ]] && printf ',\n'
             printf '    {\n'
-            printf '      "command": '
-            history_json_string "${HISTORY_SESSION_COMMANDS[$idx]}"
-            printf ',\n'
-            printf '      "started_at": '
-            history_json_string "${HISTORY_SESSION_STARTED_AT[$idx]}"
-            printf ',\n'
-            printf '      "ended_at": '
-            history_json_string "${HISTORY_SESSION_ENDED_AT[$idx]}"
-            printf ',\n'
-            printf '      "items": %s,\n' "${HISTORY_SESSION_ITEMS[$idx]}"
-            printf '      "size": '
-            history_json_string "${HISTORY_SESSION_SIZE[$idx]}"
-            printf ',\n'
-            printf '      "operation_count": %s,\n' "${HISTORY_SESSION_OPERATIONS[$idx]}"
+            history_json_string_field "      " "command" "${HISTORY_SESSION_COMMANDS[$idx]}"
+            history_json_string_field "      " "started_at" "${HISTORY_SESSION_STARTED_AT[$idx]}"
+            history_json_string_field "      " "ended_at" "${HISTORY_SESSION_ENDED_AT[$idx]}"
+            history_json_number_field "      " "items" "${HISTORY_SESSION_ITEMS[$idx]}"
+            history_json_string_field "      " "size" "${HISTORY_SESSION_SIZE[$idx]}"
+            history_json_number_field "      " "operation_count" "${HISTORY_SESSION_OPERATIONS[$idx]}"
             printf '      "actions": {"removed": %s, "trashed": %s, "skipped": %s, "failed": %s, "rebuilt": %s, "other": %s}\n' \
                 "${HISTORY_SESSION_REMOVED[$idx]}" \
                 "${HISTORY_SESSION_TRASHED[$idx]}" \
@@ -490,23 +514,15 @@ history_render_json_deletions() {
         while [[ "$idx" -ge "$start" ]]; do
             [[ "$emitted" -gt 0 ]] && printf ',\n'
             printf '    {\n'
-            printf '      "timestamp": '
-            history_json_string "${HISTORY_DELETE_TIMESTAMPS[$idx]}"
-            printf ',\n'
-            printf '      "mode": '
-            history_json_string "${HISTORY_DELETE_MODES[$idx]}"
-            printf ',\n'
-            printf '      "status": '
-            history_json_string "${HISTORY_DELETE_STATUSES[$idx]}"
-            printf ',\n'
+            history_json_string_field "      " "timestamp" "${HISTORY_DELETE_TIMESTAMPS[$idx]}"
+            history_json_string_field "      " "mode" "${HISTORY_DELETE_MODES[$idx]}"
+            history_json_string_field "      " "status" "${HISTORY_DELETE_STATUSES[$idx]}"
             if [[ "${HISTORY_DELETE_SIZE_KB[$idx]}" =~ ^[0-9]+$ ]]; then
-                printf '      "size_kb": %s,\n' "${HISTORY_DELETE_SIZE_KB[$idx]}"
+                history_json_number_field "      " "size_kb" "${HISTORY_DELETE_SIZE_KB[$idx]}"
             else
                 printf '      "size_kb": null,\n'
             fi
-            printf '      "path": '
-            history_json_string "${HISTORY_DELETE_PATHS[$idx]}"
-            printf '\n'
+            history_json_string_field "      " "path" "${HISTORY_DELETE_PATHS[$idx]}" ""
             printf '    }'
             emitted=$((emitted + 1))
             idx=$((idx - 1))
