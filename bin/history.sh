@@ -15,11 +15,11 @@ HISTORY_LIMIT="$MOLE_HISTORY_DEFAULT_LIMIT"
 show_history_help() {
     echo "Usage: mo history [OPTIONS]"
     echo ""
-    echo "Review recent Mole cleanup, purge, uninstall, and deletion activity."
+    echo "Review recent Mole operation and deletion activity."
     echo ""
     echo "Options:"
     echo "  --json           Output history as JSON"
-    echo "  --limit N        Show the most recent N sessions and deletion entries"
+    echo "  --limit N        Show the most recent N entries, 1-200"
     echo "  -h, --help       Show this help message"
 }
 
@@ -35,7 +35,7 @@ main() {
                     echo "Missing value for --limit" >&2
                     exit 1
                 fi
-                if [[ ! "$1" =~ ^[0-9]+$ || "$1" -lt 1 ]]; then
+                if [[ ! "$1" =~ ^[0-9]+$ || "$1" -lt 1 || "$1" -gt "$MOLE_HISTORY_MAX_LIMIT" ]]; then
                     echo "Invalid value for --limit: $1" >&2
                     exit 1
                 fi

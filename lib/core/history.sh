@@ -15,6 +15,7 @@ if [[ -z "${MOLE_BASE_LOADED:-}" ]]; then
 fi
 
 readonly MOLE_HISTORY_DEFAULT_LIMIT=20
+readonly MOLE_HISTORY_MAX_LIMIT=200
 
 declare -a HISTORY_SESSION_COMMANDS=()
 declare -a HISTORY_SESSION_STARTED_AT=()
@@ -62,8 +63,8 @@ history_normalize_limit() {
         printf '%s\n' "$MOLE_HISTORY_DEFAULT_LIMIT"
         return 0
     fi
-    if [[ "$value" -gt 200 ]]; then
-        printf '200\n'
+    if [[ "$value" -gt "$MOLE_HISTORY_MAX_LIMIT" ]]; then
+        printf '%s\n' "$MOLE_HISTORY_MAX_LIMIT"
         return 0
     fi
     printf '%s\n' "$value"
@@ -305,19 +306,12 @@ history_size_label() {
 
 history_json_escape() {
     local value="${1:-}"
-    printf '%s' "$value" | awk '
-        BEGIN { ORS = "" }
-        {
-            gsub(/\\/, "\\\\")
-            gsub(/"/, "\\\"")
-            gsub(/\t/, "\\t")
-            gsub(/\r/, "\\r")
-            if (NR > 1) {
-                printf "\\n"
-            }
-            printf "%s", $0
-        }
-    '
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\t'/\\t}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\n'/\\n}"
+    printf '%s' "$value"
 }
 
 history_json_string() {

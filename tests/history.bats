@@ -111,4 +111,8 @@ assert data["deletions"][1]["path"] == "/tmp/Old App.app"
     run env HOME="$HOME" "$PROJECT_ROOT/mole" history --limit nope
     [ "$status" -eq 1 ]
     [[ "$output" == *"Invalid value for --limit"* ]]
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --limit 500
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Invalid value for --limit"* ]]
 }
