@@ -34,11 +34,10 @@ main() {
                     echo "Missing value for --limit" >&2
                     exit 1
                 fi
-                if [[ ! "$1" =~ ^[0-9]+$ || "$1" -lt 1 || "$1" -gt "$MOLE_HISTORY_MAX_LIMIT" ]]; then
+                if ! HISTORY_LIMIT=$(history_parse_limit "$1"); then
                     echo "Invalid value for --limit: $1" >&2
                     exit 1
                 fi
-                HISTORY_LIMIT=$(history_normalize_limit "$1")
                 ;;
             "--help" | "-h")
                 show_history_help

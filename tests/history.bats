@@ -81,6 +81,23 @@ assert data["deletions"][1]["path"] == "/tmp/Old App.app"
 '
 }
 
+@test "mo history --json escapes unusual path characters" {
+    : > "$HOME/Library/Logs/mole/operations.log"
+    weird_path=$'/tmp/unicode-\xe9\x9b\xaa-quote"slash\\tab\tbackspace\bformfeed\fend'
+    printf '2026-05-24T10:00:02+0000\ttrash\t4\tok\t%s\n' "$weird_path" > "$HOME/Library/Logs/mole/deletions.log"
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [ "$status" -eq 0 ]
+
+    printf '%s\n' "$output" | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["deletions"][0]["path"] == "/tmp/unicode-\u96ea-quote\"slash\\tab\tbackspace\bformfeed\fend"
+'
+}
+
 @test "mo history --limit caps sessions and deletion entries" {
     write_history_logs
 
@@ -90,6 +107,16 @@ assert data["deletions"][1]["path"] == "/tmp/Old App.app"
     [[ "$output" != *"clean      2026-05-24 10:00:00"* ]]
     [[ "$output" == *"/tmp/build"* ]]
     [[ "$output" != *"/tmp/Old App.app"* ]]
+}
+
+@test "mo history --limit accepts decimal values with leading zeros" {
+    write_history_logs
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --limit 0001
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"purge"* ]]
+    [[ "$output" != *"clean      2026-05-24 10:00:00"* ]]
+    [[ "$output" != *"value too great for base"* ]]
 }
 
 @test "mo history handles empty logs" {
@@ -126,6 +153,18 @@ echo sourced
     [[ "$output" != *"Mole History"* ]]
 }
 
+@test "mo history early dispatch keeps global debug flag behavior" {
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" --debug history --limit 0001
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Mole History"* ]]
+    [[ "$output" != *"Unknown option"* ]]
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --debug --limit 0001
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Mole History"* ]]
+    [[ "$output" != *"Unknown option"* ]]
+}
+
 @test "mo history rejects unknown options" {
     run env HOME="$HOME" "$PROJECT_ROOT/mole" history --bad-option
     [ "$status" -eq 1 ]
@@ -140,4 +179,9 @@ echo sourced
     run env HOME="$HOME" "$PROJECT_ROOT/mole" history --limit 500
     [ "$status" -eq 1 ]
     [[ "$output" == *"Invalid value for --limit"* ]]
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --limit 999999999999999999999999
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Invalid value for --limit"* ]]
+    [[ "$output" != *"value too great for base"* ]]
 }

@@ -59,15 +59,42 @@ history_deletions_log_file() {
 
 history_normalize_limit() {
     local value="${1:-$MOLE_HISTORY_DEFAULT_LIMIT}"
-    if [[ ! "$value" =~ ^[0-9]+$ || "$value" -lt 1 ]]; then
+    local normalized
+
+    if ! normalized=$(history_normalize_decimal "$value"); then
         printf '%s\n' "$MOLE_HISTORY_DEFAULT_LIMIT"
         return 0
     fi
-    if [[ "$value" -gt "$MOLE_HISTORY_MAX_LIMIT" ]]; then
+    if [[ "$normalized" == "0" ]]; then
+        printf '%s\n' "$MOLE_HISTORY_DEFAULT_LIMIT"
+        return 0
+    fi
+    if [[ "${#normalized}" -gt 3 || "$normalized" -gt "$MOLE_HISTORY_MAX_LIMIT" ]]; then
         printf '%s\n' "$MOLE_HISTORY_MAX_LIMIT"
         return 0
     fi
+    printf '%s\n' "$normalized"
+}
+
+history_normalize_decimal() {
+    local value="${1:-}"
+
+    [[ "$value" =~ ^[0-9]+$ ]] || return 1
+    while [[ "$value" != "0" && "${value#0}" != "$value" ]]; do
+        value="${value#0}"
+    done
     printf '%s\n' "$value"
+}
+
+history_parse_limit() {
+    local value="$1"
+    local normalized
+
+    normalized=$(history_normalize_decimal "$value") || return 1
+    [[ "$normalized" != "0" ]] || return 1
+    [[ "${#normalized}" -le 3 ]] || return 1
+    [[ "$normalized" -le "$MOLE_HISTORY_MAX_LIMIT" ]] || return 1
+    printf '%s\n' "$normalized"
 }
 
 history_reset_active_session() {
@@ -306,12 +333,34 @@ history_size_label() {
 
 history_json_escape() {
     local value="${1:-}"
-    value="${value//\\/\\\\}"
-    value="${value//\"/\\\"}"
-    value="${value//$'\t'/\\t}"
-    value="${value//$'\r'/\\r}"
-    value="${value//$'\n'/\\n}"
-    printf '%s' "$value"
+    local LC_ALL=C
+    local char code idx
+
+    idx=0
+    while [[ "$idx" -lt "${#value}" ]]; do
+        char="${value:$idx:1}"
+        case "$char" in
+            "\\") printf '%s' "\\\\" ;;
+            "\"") printf '%s' "\\\"" ;;
+            $'\b') printf '%s' "\\b" ;;
+            $'\f') printf '%s' "\\f" ;;
+            $'\n') printf '%s' "\\n" ;;
+            $'\r') printf '%s' "\\r" ;;
+            $'\t') printf '%s' "\\t" ;;
+            *)
+                printf -v code '%d' "'$char"
+                if [[ "$code" -lt 0 ]]; then
+                    code=$((code + 256))
+                fi
+                if [[ "$code" -lt 32 ]]; then
+                    printf '\\u%04x' "$code"
+                else
+                    printf '%s' "$char"
+                fi
+                ;;
+        esac
+        idx=$((idx + 1))
+    done
 }
 
 history_json_string() {
