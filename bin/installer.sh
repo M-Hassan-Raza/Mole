@@ -703,6 +703,8 @@ show_summary() {
 
     if [[ "$dry_run_mode" == "1" ]]; then
         summary_heading="Dry run complete - no changes made"
+    elif [[ $total_delete_failed -gt 0 ]]; then
+        summary_heading="Installer cleanup incomplete"
     fi
 
     if [[ $total_deleted -gt 0 ]]; then
@@ -717,6 +719,29 @@ show_summary() {
         fi
     else
         summary_details+=("No installers were removed")
+    fi
+
+    if [[ $total_delete_failed -gt 0 ]]; then
+        local failure_label="installers"
+        [[ $total_delete_failed -eq 1 ]] && failure_label="installer"
+        summary_details+=("Failed to remove ${YELLOW}$total_delete_failed${NC} $failure_label")
+
+        local failure_count=${#INSTALLER_DELETE_FAILURE_PATHS[@]}
+        local failure_limit=5
+        if [[ $failure_count -lt $failure_limit ]]; then
+            failure_limit=$failure_count
+        fi
+
+        local failure_index
+        for ((failure_index = 0; failure_index < failure_limit; failure_index++)); do
+            local failed_path="${INSTALLER_DELETE_FAILURE_PATHS[$failure_index]}"
+            local failure_reason="${INSTALLER_DELETE_FAILURE_REASONS[$failure_index]}"
+            summary_details+=("${ICON_WARNING} $failed_path (${failure_reason})")
+        done
+
+        if [[ $failure_count -gt $failure_limit ]]; then
+            summary_details+=("${ICON_WARNING} $((failure_count - failure_limit)) more failed")
+        fi
     fi
 
     print_summary_block "$summary_heading" "${summary_details[@]}"
@@ -756,6 +781,9 @@ main() {
     case $exit_code in
         0)
             show_summary
+            if [[ $total_delete_failed -gt 0 ]]; then
+                return 1
+            fi
             ;;
         1)
             printf '\n'

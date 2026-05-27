@@ -304,3 +304,26 @@ setup() {
 	[[ "$output" == *"deleted=1 failed=1"* ]]
 	[[ "$output" == *"failure=/System|protected path"* ]]
 }
+
+@test "show_summary reports installer delete failures" {
+	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
+        export MOLE_TEST_MODE=1
+        source "$1"
+
+        total_deleted=1
+        total_size_freed_kb=1
+        total_delete_failed=2
+        INSTALLER_DELETE_FAILURE_PATHS=("$HOME/Downloads/Blocked.dmg" "$HOME/Downloads/Stale.pkg")
+        INSTALLER_DELETE_FAILURE_REASONS=("protected path" "still exists")
+
+        show_summary
+    ' bash "$PROJECT_ROOT/bin/installer.sh"
+
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"Installer cleanup incomplete"* ]]
+	[[ "$output" == *"Failed to remove"* ]]
+	[[ "$output" == *"Blocked.dmg"* ]]
+	[[ "$output" == *"protected path"* ]]
+	[[ "$output" == *"Stale.pkg"* ]]
+	[[ "$output" == *"still exists"* ]]
+}
