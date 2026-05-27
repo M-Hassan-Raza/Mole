@@ -555,7 +555,9 @@ delete_selected_installers() {
 
     # Parse selection indices
     local -a selected_indices=()
-    [[ -n "$MOLE_SELECTION_RESULT" ]] && IFS=',' read -ra selected_indices <<< "$MOLE_SELECTION_RESULT"
+    if [[ -n "$MOLE_SELECTION_RESULT" ]]; then
+        IFS=',' read -ra selected_indices <<< "$MOLE_SELECTION_RESULT"
+    fi
 
     if [[ ${#selected_indices[@]} -eq 0 ]]; then
         return 1
