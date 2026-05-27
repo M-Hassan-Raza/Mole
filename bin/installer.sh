@@ -660,7 +660,7 @@ delete_selected_installers() {
     local confirm_size=0
     local plan_index
     for ((plan_index = 0; plan_index < ${#INSTALLER_DELETE_SIZES[@]}; plan_index++)); do
-        confirm_size=$((confirm_size + INSTALLER_DELETE_SIZES[plan_index]))
+        confirm_size=$((confirm_size + ${INSTALLER_DELETE_SIZES[$plan_index]}))
     done
 
     local confirm_human
