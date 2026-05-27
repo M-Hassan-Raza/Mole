@@ -11,6 +11,7 @@ declare MOLE_INSTALLER_SCAN_MAX_DEPTH
 
 export LC_ALL=C
 export LANG=C
+export MOLE_CURRENT_COMMAND="${MOLE_CURRENT_COMMAND:-installer}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../lib/core/common.sh"
