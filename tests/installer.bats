@@ -273,6 +273,7 @@ setup() {
         printf "deleted=%s failed=%s freed=%s\n" "$total_deleted" "${total_delete_failed:-0}" "$total_size_freed_kb"
         [[ ! -e "$2" ]]
         [[ ! -e "$3" ]]
+        grep -F "[installer] REMOVED $2" "$HOME/Library/Logs/mole/operations.log" > /dev/null
     ' bash "$PROJECT_ROOT/bin/installer.sh" "$first" "$second"
 
 	[ "$status" -eq 0 ]
@@ -290,12 +291,16 @@ setup() {
         export MOLE_DELETE_LOG="$HOME/deletions.log"
         source "$1"
 
+        system_size=$(get_file_size "/System")
         INSTALLER_PATHS=("$2" "/System")
-        INSTALLER_SIZES=(4 0)
+        INSTALLER_SIZES=(4 "$system_size")
         MOLE_SELECTION_RESULT="0,1"
 
+        set +e
         delete_selected_installers < <(printf "\n")
-        printf "deleted=%s failed=%s\n" "$total_deleted" "${total_delete_failed:-0}"
+        rc=$?
+        set -e
+        printf "rc=%s deleted=%s failed=%s\n" "$rc" "$total_deleted" "${total_delete_failed:-0}"
         if [[ ${total_delete_failed:-0} -gt 0 ]]; then
             printf "failure=%s\n" "${INSTALLER_DELETE_FAILURES[0]}"
         fi
@@ -303,8 +308,70 @@ setup() {
     ' bash "$PROJECT_ROOT/bin/installer.sh" "$removable"
 
 	[ "$status" -eq 0 ]
-	[[ "$output" == *"deleted=1 failed=1"* ]]
-	[[ "$output" == *"failure=/System (protected path)"* ]]
+	[[ "$output" == *"rc=3 deleted=1 failed=1"* ]]
+	[[ "$output" == *"failure=/System (delete failed)"* ]]
+}
+
+@test "execute_installer_delete_plan refuses replaced files" {
+	local target="$HOME/Downloads/Replaced.dmg"
+	local replacement="$HOME/Downloads/Replacement.dmg"
+	printf 'one' > "$target"
+	printf 'one' > "$replacement"
+
+	# shellcheck disable=SC2016
+	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
+        export MOLE_TEST_MODE=1
+        export MOLE_TEST_NO_AUTH=1
+        source "$1"
+
+        INSTALLER_PATHS=("$2")
+        INSTALLER_SIZES=("$(get_file_size "$2")")
+        build_installer_delete_plan 0
+        mv "$2" "$2.old"
+        mv "$3" "$2"
+
+        set +e
+        execute_installer_delete_plan
+        rc=$?
+        set -e
+
+        printf "rc=%s deleted=%s failed=%s failure=%s\n" "$rc" "$total_deleted" "$total_delete_failed" "${INSTALLER_DELETE_FAILURES[0]}"
+        [[ -e "$2" ]]
+        [[ -e "$2.old" ]]
+    ' bash "$PROJECT_ROOT/bin/installer.sh" "$target" "$replacement"
+
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"rc=3 deleted=0 failed=1"* ]]
+	[[ "$output" == *"Replaced.dmg (changed since scan)"* ]]
+}
+
+@test "execute_installer_delete_plan refuses size drift" {
+	local target="$HOME/Downloads/Grew.dmg"
+	printf 'one' > "$target"
+
+	# shellcheck disable=SC2016
+	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
+        export MOLE_TEST_MODE=1
+        export MOLE_TEST_NO_AUTH=1
+        source "$1"
+
+        INSTALLER_PATHS=("$2")
+        INSTALLER_SIZES=("$(get_file_size "$2")")
+        build_installer_delete_plan 0
+        printf "two" >> "$2"
+
+        set +e
+        execute_installer_delete_plan
+        rc=$?
+        set -e
+
+        printf "rc=%s deleted=%s failed=%s failure=%s\n" "$rc" "$total_deleted" "$total_delete_failed" "${INSTALLER_DELETE_FAILURES[0]}"
+        [[ -e "$2" ]]
+    ' bash "$PROJECT_ROOT/bin/installer.sh" "$target"
+
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"rc=3 deleted=0 failed=1"* ]]
+	[[ "$output" == *"Grew.dmg (changed since scan)"* ]]
 }
 
 @test "show_summary reports installer delete failures" {
@@ -340,7 +407,7 @@ setup() {
         perform_installers() {
             total_deleted=1
             total_delete_failed=1
-            return 0
+            return "$INSTALLER_EXIT_INCOMPLETE"
         }
         show_summary() {
             printf "summary shown\n"
