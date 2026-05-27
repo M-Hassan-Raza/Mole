@@ -398,29 +398,41 @@ setup() {
 	[[ "$output" != *"Your Mac is cleaner now!"* ]]
 }
 
-@test "main exits nonzero after incomplete installer cleanup" {
+@test "main exits nonzero after real incomplete installer cleanup" {
+	local removable="$HOME/Downloads/MainGood.dmg"
+	printf 'good' > "$removable"
+
 	# shellcheck disable=SC2016
 	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
         export MOLE_TEST_MODE=1
+        export MOLE_TEST_NO_AUTH=1
+        export MOLE_DELETE_LOG="$HOME/deletions.log"
         source "$1"
+        test_removable="$2"
 
-        perform_installers() {
-            total_deleted=1
-            total_delete_failed=1
-            return "$INSTALLER_EXIT_INCOMPLETE"
+        collect_installers() {
+            local system_size
+            system_size=$(get_file_size "/System")
+            INSTALLER_PATHS=("$test_removable" "/System")
+            INSTALLER_SIZES=(4 "$system_size")
+            DISPLAY_NAMES=("MainGood.dmg" "System")
+            return 0
         }
-        show_summary() {
-            printf "summary shown\n"
+
+        show_installer_menu() {
+            MOLE_SELECTION_RESULT="0,1"
+            return 0
         }
 
         set +e
-        main
+        main < <(printf "\n")
         rc=$?
         set -e
-        printf "rc=%s\n" "$rc"
-    ' bash "$PROJECT_ROOT/bin/installer.sh"
+        printf "rc=%s removed=%s\n" "$rc" "$([[ ! -e "$test_removable" ]] && echo yes || echo no)"
+    ' bash "$PROJECT_ROOT/bin/installer.sh" "$removable"
 
 	[ "$status" -eq 0 ]
-	[[ "$output" == *"summary shown"* ]]
+	[[ "$output" == *"Installer cleanup incomplete"* ]]
 	[[ "$output" == *"rc=1"* ]]
+	[[ "$output" == *"removed=yes"* ]]
 }
