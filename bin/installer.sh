@@ -136,8 +136,7 @@ declare -a INSTALLER_PATHS=()
 declare -a INSTALLER_SIZES=()
 declare -a INSTALLER_SOURCES=()
 declare -a DISPLAY_NAMES=()
-declare -a INSTALLER_DELETE_FAILURE_PATHS=()
-declare -a INSTALLER_DELETE_FAILURE_REASONS=()
+declare -a INSTALLER_DELETE_FAILURES=()
 
 # Get source directory display name - for example "Downloads" or "Desktop"
 get_source_display() {
@@ -536,16 +535,14 @@ reset_installer_delete_results() {
     total_deleted=0
     total_size_freed_kb=0
     total_delete_failed=0
-    INSTALLER_DELETE_FAILURE_PATHS=()
-    INSTALLER_DELETE_FAILURE_REASONS=()
+    INSTALLER_DELETE_FAILURES=()
 }
 
 record_installer_delete_failure() {
     local file_path="$1"
     local reason="$2"
 
-    INSTALLER_DELETE_FAILURE_PATHS+=("$file_path")
-    INSTALLER_DELETE_FAILURE_REASONS+=("$reason")
+    INSTALLER_DELETE_FAILURES+=("$file_path ($reason)")
     total_delete_failed=$((total_delete_failed + 1))
 }
 
@@ -718,7 +715,9 @@ show_summary() {
             summary_details+=("Would remove ${GREEN}$total_deleted${NC} installers, free ${GREEN}${freed_mb}MB${NC}")
         else
             summary_details+=("Removed ${GREEN}$total_deleted${NC} installers, freed ${GREEN}${freed_mb}MB${NC}")
-            summary_details+=("Your Mac is cleaner now!")
+            if [[ $total_delete_failed -eq 0 ]]; then
+                summary_details+=("Your Mac is cleaner now!")
+            fi
         fi
     else
         summary_details+=("No installers were removed")
@@ -729,7 +728,7 @@ show_summary() {
         [[ $total_delete_failed -eq 1 ]] && failure_label="installer"
         summary_details+=("Failed to remove ${YELLOW}$total_delete_failed${NC} $failure_label")
 
-        local failure_count=${#INSTALLER_DELETE_FAILURE_PATHS[@]}
+        local failure_count=${#INSTALLER_DELETE_FAILURES[@]}
         local failure_limit=5
         if [[ $failure_count -lt $failure_limit ]]; then
             failure_limit=$failure_count
@@ -737,9 +736,8 @@ show_summary() {
 
         local failure_index
         for ((failure_index = 0; failure_index < failure_limit; failure_index++)); do
-            local failed_path="${INSTALLER_DELETE_FAILURE_PATHS[$failure_index]}"
-            local failure_reason="${INSTALLER_DELETE_FAILURE_REASONS[$failure_index]}"
-            summary_details+=("${ICON_WARNING} $failed_path (${failure_reason})")
+            local failure_detail="${INSTALLER_DELETE_FAILURES[$failure_index]}"
+            summary_details+=("${ICON_WARNING} $failure_detail")
         done
 
         if [[ $failure_count -gt $failure_limit ]]; then

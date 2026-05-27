@@ -297,14 +297,14 @@ setup() {
         delete_selected_installers < <(printf "\n")
         printf "deleted=%s failed=%s\n" "$total_deleted" "${total_delete_failed:-0}"
         if [[ ${total_delete_failed:-0} -gt 0 ]]; then
-            printf "failure=%s|%s\n" "${INSTALLER_DELETE_FAILURE_PATHS[0]}" "${INSTALLER_DELETE_FAILURE_REASONS[0]}"
+            printf "failure=%s\n" "${INSTALLER_DELETE_FAILURES[0]}"
         fi
         [[ ! -e "$2" ]]
     ' bash "$PROJECT_ROOT/bin/installer.sh" "$removable"
 
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"deleted=1 failed=1"* ]]
-	[[ "$output" == *"failure=/System|protected path"* ]]
+	[[ "$output" == *"failure=/System (protected path)"* ]]
 }
 
 @test "show_summary reports installer delete failures" {
@@ -316,8 +316,7 @@ setup() {
         total_deleted=1
         total_size_freed_kb=1
         total_delete_failed=2
-        INSTALLER_DELETE_FAILURE_PATHS=("$HOME/Downloads/Blocked.dmg" "$HOME/Downloads/Stale.pkg")
-        INSTALLER_DELETE_FAILURE_REASONS=("protected path" "still exists")
+        INSTALLER_DELETE_FAILURES=("$HOME/Downloads/Blocked.dmg (protected path)" "$HOME/Downloads/Stale.pkg (still exists)")
 
         show_summary
     ' bash "$PROJECT_ROOT/bin/installer.sh"
@@ -329,6 +328,7 @@ setup() {
 	[[ "$output" == *"protected path"* ]]
 	[[ "$output" == *"Stale.pkg"* ]]
 	[[ "$output" == *"still exists"* ]]
+	[[ "$output" != *"Your Mac is cleaner now!"* ]]
 }
 
 @test "main exits nonzero after incomplete installer cleanup" {
