@@ -258,6 +258,7 @@ setup() {
 	printf 'one' > "$first"
 	printf 'two' > "$second"
 
+	# shellcheck disable=SC2016
 	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
         export MOLE_TEST_MODE=1
         export MOLE_TEST_NO_AUTH=1
@@ -282,6 +283,7 @@ setup() {
 	local removable="$HOME/Downloads/Good.dmg"
 	printf 'good' > "$removable"
 
+	# shellcheck disable=SC2016
 	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
         export MOLE_TEST_MODE=1
         export MOLE_TEST_NO_AUTH=1
@@ -306,6 +308,7 @@ setup() {
 }
 
 @test "show_summary reports installer delete failures" {
+	# shellcheck disable=SC2016
 	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
         export MOLE_TEST_MODE=1
         source "$1"
@@ -329,6 +332,7 @@ setup() {
 }
 
 @test "main exits nonzero after incomplete installer cleanup" {
+	# shellcheck disable=SC2016
 	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
         export MOLE_TEST_MODE=1
         source "$1"
