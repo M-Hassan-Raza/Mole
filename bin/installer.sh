@@ -128,12 +128,15 @@ scan_all_installers() {
 # Initialize stats
 declare -i total_deleted=0
 declare -i total_size_freed_kb=0
+declare -i total_delete_failed=0
 
 # Global arrays for installer data
 declare -a INSTALLER_PATHS=()
 declare -a INSTALLER_SIZES=()
 declare -a INSTALLER_SOURCES=()
 declare -a DISPLAY_NAMES=()
+declare -a INSTALLER_DELETE_FAILURE_PATHS=()
+declare -a INSTALLER_DELETE_FAILURE_REASONS=()
 
 # Get source directory display name - for example "Downloads" or "Desktop"
 get_source_display() {
@@ -528,8 +531,27 @@ show_installer_menu() {
     return 0
 }
 
+reset_installer_delete_results() {
+    total_deleted=0
+    total_size_freed_kb=0
+    total_delete_failed=0
+    INSTALLER_DELETE_FAILURE_PATHS=()
+    INSTALLER_DELETE_FAILURE_REASONS=()
+}
+
+record_installer_delete_failure() {
+    local file_path="$1"
+    local reason="$2"
+
+    INSTALLER_DELETE_FAILURE_PATHS+=("$file_path")
+    INSTALLER_DELETE_FAILURE_REASONS+=("$reason")
+    total_delete_failed=$((total_delete_failed + 1))
+}
+
 # Delete selected installers
 delete_selected_installers() {
+    reset_installer_delete_results
+
     # Parse selection indices
     local -a selected_indices=()
     [[ -n "$MOLE_SELECTION_RESULT" ]] && IFS=',' read -ra selected_indices <<< "$MOLE_SELECTION_RESULT"
@@ -538,31 +560,45 @@ delete_selected_installers() {
         return 1
     fi
 
-    # Calculate total size for confirmation
+    # Convert the UI selection into one stable deletion plan before confirming.
+    local -a delete_paths=()
+    local -a delete_sizes=()
     local confirm_size=0
     for idx in "${selected_indices[@]}"; do
-        if [[ "$idx" =~ ^[0-9]+$ ]] && [[ $idx -lt ${#INSTALLER_SIZES[@]} ]]; then
-            confirm_size=$((confirm_size + ${INSTALLER_SIZES[$idx]:-0}))
+        if [[ ! "$idx" =~ ^[0-9]+$ ]] || [[ $idx -ge ${#INSTALLER_PATHS[@]} ]]; then
+            record_installer_delete_failure "$idx" "stale selection"
+            continue
         fi
+
+        local file_path="${INSTALLER_PATHS[$idx]}"
+        local file_size="${INSTALLER_SIZES[$idx]:-0}"
+
+        delete_paths+=("$file_path")
+        delete_sizes+=("$file_size")
+        confirm_size=$((confirm_size + file_size))
     done
+
+    if [[ ${#delete_paths[@]} -eq 0 ]]; then
+        return 1
+    fi
+
     local confirm_human
     confirm_human=$(bytes_to_human "$confirm_size")
 
     # Show files to be deleted
     echo -e "${PURPLE_BOLD}Files to be removed:${NC}"
-    for idx in "${selected_indices[@]}"; do
-        if [[ "$idx" =~ ^[0-9]+$ ]] && [[ $idx -lt ${#INSTALLER_PATHS[@]} ]]; then
-            local file_path="${INSTALLER_PATHS[$idx]}"
-            local file_size="${INSTALLER_SIZES[$idx]}"
-            local size_human
-            size_human=$(bytes_to_human "$file_size")
-            echo -e "  ${GREEN}${ICON_SUCCESS}${NC} $(basename "$file_path") ${GRAY}, ${size_human}${NC}"
-        fi
+    local plan_index
+    for ((plan_index = 0; plan_index < ${#delete_paths[@]}; plan_index++)); do
+        local file_path="${delete_paths[$plan_index]}"
+        local file_size="${delete_sizes[$plan_index]}"
+        local size_human
+        size_human=$(bytes_to_human "$file_size")
+        echo -e "  ${GREEN}${ICON_SUCCESS}${NC} $(basename "$file_path") ${GRAY}, ${size_human}${NC}"
     done
 
     # Confirm deletion
     echo ""
-    echo -ne "${PURPLE}${ICON_ARROW}${NC} Delete ${#selected_indices[@]} installers, ${confirm_human}  ${GREEN}Enter${NC} confirm, ${GRAY}ESC${NC} cancel: "
+    echo -ne "${PURPLE}${ICON_ARROW}${NC} Delete ${#delete_paths[@]} installers, ${confirm_human}  ${GREEN}Enter${NC} confirm, ${GRAY}ESC${NC} cancel: "
 
     IFS= read -r -s -n1 confirm || confirm=""
     case "$confirm" in
@@ -579,30 +615,33 @@ delete_selected_installers() {
     esac
 
     # Delete each selected installer with spinner
-    total_deleted=0
-    total_size_freed_kb=0
-
     if [[ -t 1 ]]; then
         start_inline_spinner "Removing installers..."
     fi
 
-    for idx in "${selected_indices[@]}"; do
-        if [[ ! "$idx" =~ ^[0-9]+$ ]] || [[ $idx -ge ${#INSTALLER_PATHS[@]} ]]; then
+    for ((plan_index = 0; plan_index < ${#delete_paths[@]}; plan_index++)); do
+        local file_path="${delete_paths[$plan_index]}"
+        local file_size="${delete_sizes[$plan_index]}"
+
+        if ! validate_path_for_deletion "$file_path" > /dev/null 2>&1; then
+            record_installer_delete_failure "$file_path" "protected path"
             continue
         fi
 
-        local file_path="${INSTALLER_PATHS[$idx]}"
-        local file_size="${INSTALLER_SIZES[$idx]}"
-
-        # Validate path before deletion
-        if ! validate_path_for_deletion "$file_path"; then
+        if [[ ! -e "$file_path" && ! -L "$file_path" ]]; then
+            record_installer_delete_failure "$file_path" "missing"
             continue
         fi
 
-        # Delete the file
-        if safe_remove "$file_path" true; then
-            total_size_freed_kb=$((total_size_freed_kb + ((file_size + 1023) / 1024)))
-            total_deleted=$((total_deleted + 1))
+        if mole_delete "$file_path" false; then
+            if [[ "${MOLE_DRY_RUN:-0}" == "1" ]] || [[ ! -e "$file_path" && ! -L "$file_path" ]]; then
+                total_size_freed_kb=$((total_size_freed_kb + ((file_size + 1023) / 1024)))
+                total_deleted=$((total_deleted + 1))
+            else
+                record_installer_delete_failure "$file_path" "still exists"
+            fi
+        else
+            record_installer_delete_failure "$file_path" "delete failed"
         fi
     done
 

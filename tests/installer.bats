@@ -251,3 +251,56 @@ setup() {
 	[[ "$output" != *"symlink.dmg"* ]]
 	[[ "$output" != *"dangling.lnk"* ]]
 }
+
+@test "delete_selected_installers removes selected files and records successes" {
+	local first="$HOME/Downloads/First.dmg"
+	local second="$HOME/Downloads/Second.pkg"
+	printf 'one' > "$first"
+	printf 'two' > "$second"
+
+	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
+        export MOLE_TEST_MODE=1
+        export MOLE_TEST_NO_AUTH=1
+        export MOLE_DELETE_LOG="$HOME/deletions.log"
+        source "$1"
+
+        INSTALLER_PATHS=("$2" "$3")
+        INSTALLER_SIZES=(3 3)
+        MOLE_SELECTION_RESULT="0,1"
+
+        delete_selected_installers < <(printf "\n")
+        printf "deleted=%s failed=%s freed=%s\n" "$total_deleted" "${total_delete_failed:-0}" "$total_size_freed_kb"
+        [[ ! -e "$2" ]]
+        [[ ! -e "$3" ]]
+    ' bash "$PROJECT_ROOT/bin/installer.sh" "$first" "$second"
+
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"deleted=2 failed=0"* ]]
+}
+
+@test "delete_selected_installers records protected-path failures" {
+	local removable="$HOME/Downloads/Good.dmg"
+	printf 'good' > "$removable"
+
+	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
+        export MOLE_TEST_MODE=1
+        export MOLE_TEST_NO_AUTH=1
+        export MOLE_DELETE_LOG="$HOME/deletions.log"
+        source "$1"
+
+        INSTALLER_PATHS=("$2" "/System")
+        INSTALLER_SIZES=(4 0)
+        MOLE_SELECTION_RESULT="0,1"
+
+        delete_selected_installers < <(printf "\n")
+        printf "deleted=%s failed=%s\n" "$total_deleted" "${total_delete_failed:-0}"
+        if [[ ${total_delete_failed:-0} -gt 0 ]]; then
+            printf "failure=%s|%s\n" "${INSTALLER_DELETE_FAILURE_PATHS[0]}" "${INSTALLER_DELETE_FAILURE_REASONS[0]}"
+        fi
+        [[ ! -e "$2" ]]
+    ' bash "$PROJECT_ROOT/bin/installer.sh" "$removable"
+
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"deleted=1 failed=1"* ]]
+	[[ "$output" == *"failure=/System|protected path"* ]]
+}
