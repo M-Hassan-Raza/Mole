@@ -327,3 +327,29 @@ setup() {
 	[[ "$output" == *"Stale.pkg"* ]]
 	[[ "$output" == *"still exists"* ]]
 }
+
+@test "main exits nonzero after incomplete installer cleanup" {
+	run env HOME="$HOME" TERM="$TERM" bash -euo pipefail -c '
+        export MOLE_TEST_MODE=1
+        source "$1"
+
+        perform_installers() {
+            total_deleted=1
+            total_delete_failed=1
+            return 0
+        }
+        show_summary() {
+            printf "summary shown\n"
+        }
+
+        set +e
+        main
+        rc=$?
+        set -e
+        printf "rc=%s\n" "$rc"
+    ' bash "$PROJECT_ROOT/bin/installer.sh"
+
+	[ "$status" -eq 0 ]
+	[[ "$output" == *"summary shown"* ]]
+	[[ "$output" == *"rc=1"* ]]
+}
