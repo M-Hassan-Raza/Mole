@@ -409,7 +409,7 @@ func (c *Collector) collectFull() (MetricsSnapshot, error) {
 }
 
 func collectProcessesInto(collected *collectedMetrics) error {
-	procs, err := collectProcesses()
+	procs, err := collectProcessesFunc()
 	if err != nil {
 		return err
 	}
