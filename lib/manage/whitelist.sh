@@ -164,11 +164,12 @@ EOF
 # Get all optimize items with their patterns
 get_optimize_whitelist_items() {
     # Format: "display_name|pattern|category"
-    local action _handler name _description _safe
-    while IFS='|' read -r action _handler name _description _safe; do
-        [[ -n "$action" ]] || continue
-        printf '%s|%s|optimize_task\n' "$name" "$action"
-    done < <(optimize_catalog_records)
+    local index
+    for ((index = 0; index < ${#MOLE_OPTIMIZE_ACTIONS[@]}; index++)); do
+        printf '%s|%s|optimize_task\n' \
+            "${MOLE_OPTIMIZE_WHITELIST_NAMES[$index]}" \
+            "${MOLE_OPTIMIZE_ACTIONS[$index]}"
+    done
 }
 
 patterns_equivalent() {

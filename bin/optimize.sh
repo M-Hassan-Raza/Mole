@@ -266,17 +266,18 @@ main() {
 
     export FIRST_ACTION=true
     local safe_count=0
-    local action _handler name _description _safe
-    while IFS='|' read -r action _handler name _description _safe; do
-        [[ -n "$action" ]] || continue
+    local index action health_name
+    for ((index = 0; index < ${#MOLE_OPTIMIZE_ACTIONS[@]}; index++)); do
+        action=${MOLE_OPTIMIZE_ACTIONS[$index]}
+        health_name=${MOLE_OPTIMIZE_HEALTH_NAMES[$index]}
         safe_count=$((safe_count + 1))
         if command -v is_whitelisted > /dev/null && is_whitelisted "$action"; then
-            opt_msg "Skipped (whitelisted): $name"
+            opt_msg "Skipped (whitelisted): $health_name"
             continue
         fi
-        announce_action "$name"
+        announce_action "$health_name"
         execute_optimization "$action"
-    done < <(optimize_catalog_records)
+    done
 
     export OPTIMIZE_SAFE_COUNT=$safe_count
     export OPTIMIZE_CONFIRM_COUNT=0

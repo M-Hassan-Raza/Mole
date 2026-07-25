@@ -129,13 +129,16 @@ generate_health_json() {
 EOF
 
     local first=true
-    local action _handler name desc safe
-    while IFS='|' read -r action _handler name desc safe; do
-        [[ -n "$action" ]] || continue
+    local index action health_name desc safe
+    for ((index = 0; index < ${#MOLE_OPTIMIZE_ACTIONS[@]}; index++)); do
+        action=${MOLE_OPTIMIZE_ACTIONS[$index]}
+        health_name=${MOLE_OPTIMIZE_HEALTH_NAMES[$index]}
+        desc=${MOLE_OPTIMIZE_DESCRIPTIONS[$index]}
+        safe=${MOLE_OPTIMIZE_SAFE_VALUES[$index]}
 
         # Escape strings
         action=$(json_escape "$action")
-        name=$(json_escape "$name")
+        health_name=$(json_escape "$health_name")
         desc=$(json_escape "$desc")
 
         [[ "$first" == "true" ]] && first=false || echo ","
@@ -143,13 +146,13 @@ EOF
         cat << EOF
     {
       "category": "system",
-      "name": "$name",
+      "name": "$health_name",
       "description": "$desc",
       "action": "$action",
       "safe": $safe
     }
 EOF
-    done < <(optimize_catalog_records)
+    done
 
     # Close JSON
     cat << 'EOF'
