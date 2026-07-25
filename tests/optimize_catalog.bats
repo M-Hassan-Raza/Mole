@@ -53,7 +53,7 @@ done
 optimize_catalog_validate || exit 1
 EOF
 
-    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 }
 
 @test "health JSON preserves the exact optimization contract" {
@@ -67,10 +67,14 @@ contract_hash=$(
         shasum -a 256 |
         awk '{print $1}'
 )
-[[ "$contract_hash" == "9c00db8177c600e35ba56df69c3c3dc078ffefee57d982a96b71b3174cb340ac" ]] || exit 1
+expected_hash="9c00db8177c600e35ba56df69c3c3dc078ffefee57d982a96b71b3174cb340ac"
+if [[ "$contract_hash" != "$expected_hash" ]]; then
+    echo "health optimization contract hash: expected $expected_hash, got $contract_hash"
+    exit 1
+fi
 EOF
 
-    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 }
 
 @test "optimize whitelist preserves every public task label and action" {
@@ -79,10 +83,14 @@ set -euo pipefail
 source "$PROJECT_ROOT/lib/manage/whitelist.sh"
 
 contract_hash=$(get_optimize_whitelist_items | shasum -a 256 | awk '{print $1}')
-[[ "$contract_hash" == "89f0731c4074f1eaeabb4a2c7ab65e14392f28f31ebbc4abefc9f6919406f65a" ]] || exit 1
+expected_hash="89f0731c4074f1eaeabb4a2c7ab65e14392f28f31ebbc4abefc9f6919406f65a"
+if [[ "$contract_hash" != "$expected_hash" ]]; then
+    echo "optimize whitelist contract hash: expected $expected_hash, got $contract_hash"
+    exit 1
+fi
 EOF
 
-    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 }
 
 @test "optimize catalog rejects duplicate identities and unsafe tasks" {
@@ -106,7 +114,7 @@ if /bin/bash --noprofile --norc < <(
 fi
 EOF
 
-    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
     [[ "$output" == *"Duplicate optimize task handler: opt_system_maintenance"* ]] || return 1
     [[ "$output" == *"Optimize task is not safe for automatic execution: system_maintenance"* ]] || return 1
 }
@@ -127,7 +135,7 @@ if optimize_catalog_handler_for unknown_action; then
 fi
 EOF
 
-    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 }
 
 @test "optimization task module implements every catalog handler" {
@@ -145,5 +153,21 @@ for handler in "${MOLE_OPTIMIZE_HANDLERS[@]}"; do
 done
 EOF
 
-    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}
+
+@test "optimize catalog consumers can be sourced repeatedly" {
+    run env HOME="$BATS_TEST_TMPDIR/home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+source "$PROJECT_ROOT/lib/check/health_json.sh"
+source "$PROJECT_ROOT/lib/check/health_json.sh"
+
+declare -F execute_optimization >/dev/null || exit 1
+declare -F generate_health_json >/dev/null || exit 1
+EOF
+
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 }

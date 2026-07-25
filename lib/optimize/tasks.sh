@@ -3,7 +3,13 @@
 
 set -euo pipefail
 
+if [[ -n "${MOLE_OPTIMIZE_TASKS_LOADED:-}" ]]; then
+    return 0
+fi
+readonly MOLE_OPTIMIZE_TASKS_LOADED=1
+
 _MOLE_OPTIMIZE_TASKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly _MOLE_OPTIMIZE_TASKS_DIR
 source "$_MOLE_OPTIMIZE_TASKS_DIR/catalog.sh"
 
 # Config constants (override via env).

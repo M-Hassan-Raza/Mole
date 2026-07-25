@@ -4,6 +4,11 @@
 
 set -euo pipefail
 
+if [[ -n "${MOLE_HEALTH_JSON_LOADED:-}" ]]; then
+    return 0
+fi
+readonly MOLE_HEALTH_JSON_LOADED=1
+
 # Ensure dependencies are loaded (only if running standalone)
 if [[ -z "${MOLE_FILE_OPS_LOADED:-}" ]]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -11,6 +16,7 @@ if [[ -z "${MOLE_FILE_OPS_LOADED:-}" ]]; then
 fi
 
 _MOLE_HEALTH_JSON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly _MOLE_HEALTH_JSON_DIR
 source "$_MOLE_HEALTH_JSON_DIR/../optimize/catalog.sh"
 
 # Get memory info in GB
