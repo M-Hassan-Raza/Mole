@@ -173,6 +173,7 @@ Database Optimization|sqlite_vacuum|optimize_task
 LaunchServices Repair|launch_services_rebuild|optimize_task
 Dock Refresh|dock_refresh|optimize_task
 Prevent Finder .DS_Store|prevent_network_dsstore|optimize_task
+Legacy Overrides|legacy_overrides_audit|optimize_task
 Memory Optimization|memory_pressure_relief|optimize_task
 Network Stack Refresh|network_stack_optimize|optimize_task
 Permission Repair|disk_permissions_repair|optimize_task
