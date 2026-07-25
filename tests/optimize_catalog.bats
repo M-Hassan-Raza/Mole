@@ -32,3 +32,20 @@ EOF
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
+
+@test "optimize whitelist renders canonical task names and actions" {
+    run env HOME="$BATS_TEST_TMPDIR/home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/manage/whitelist.sh"
+
+catalog_items=$(
+    optimize_catalog_records | while IFS='|' read -r action handler name description safe; do
+        printf '%s|%s|optimize_task\n' "$name" "$action"
+    done
+)
+whitelist_items=$(get_optimize_whitelist_items)
+[[ "$whitelist_items" == "$catalog_items" ]]
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}

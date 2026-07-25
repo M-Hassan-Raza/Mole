@@ -1216,7 +1216,7 @@ EOF
 
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"Permission Repair|disk_permissions_repair|optimize_task"* ]] || return 1
-	[[ "$output" == *"Login Items Audit|login_items_audit|optimize_task"* ]] || return 1
+	[[ "$output" == *"Login Items|login_items_audit|optimize_task"* ]] || return 1
 	[[ "$output" == *"Legacy Overrides|legacy_overrides_audit|optimize_task"* ]]
 }
 
