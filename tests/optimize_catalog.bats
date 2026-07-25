@@ -49,3 +49,22 @@ EOF
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
+
+@test "optimize catalog resolves handlers by exact action id" {
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/optimize/catalog.sh"
+
+if ! handler=$(optimize_catalog_handler_for spotlight_orphan_rules_cleanup); then
+    echo "known action did not resolve"
+    exit 1
+fi
+[[ "$handler" == "opt_prune_spotlight_orphan_rules" ]] || exit 1
+if optimize_catalog_handler_for unknown_action; then
+    echo "unknown action resolved"
+    exit 1
+fi
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}

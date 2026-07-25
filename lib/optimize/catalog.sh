@@ -44,6 +44,19 @@ optimize_catalog_records() {
     printf '%s\n' "${MOLE_OPTIMIZE_TASK_CATALOG[@]}"
 }
 
+optimize_catalog_handler_for() {
+    local requested_action="$1"
+    local record action handler name description safe
+    for record in "${MOLE_OPTIMIZE_TASK_CATALOG[@]}"; do
+        IFS='|' read -r action handler name description safe <<< "$record"
+        if [[ "$action" == "$requested_action" ]]; then
+            printf '%s\n' "$handler"
+            return 0
+        fi
+    done
+    return 1
+}
+
 optimize_catalog_validate() {
     if [[ ${#MOLE_OPTIMIZE_TASK_CATALOG[@]} -eq 0 ]]; then
         echo "Optimize task catalog is empty" >&2
