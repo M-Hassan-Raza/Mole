@@ -129,8 +129,8 @@ generate_health_json() {
 EOF
 
     local first=true
-    local action handler name desc safe
-    while IFS='|' read -r action handler name desc safe; do
+    local action _handler name desc safe
+    while IFS='|' read -r action _handler name desc safe; do
         [[ -n "$action" ]] || continue
 
         # Escape strings

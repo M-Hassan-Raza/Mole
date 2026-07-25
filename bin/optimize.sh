@@ -135,8 +135,6 @@ show_system_health() {
 
 announce_action() {
     local name="$1"
-    local desc="$2"
-    local kind="$3"
 
     if [[ "${FIRST_ACTION:-true}" == "true" ]]; then
         export FIRST_ACTION=false
@@ -268,15 +266,15 @@ main() {
 
     export FIRST_ACTION=true
     local safe_count=0
-    local action handler name desc safe
-    while IFS='|' read -r action handler name desc safe; do
+    local action _handler name _description _safe
+    while IFS='|' read -r action _handler name _description _safe; do
         [[ -n "$action" ]] || continue
         safe_count=$((safe_count + 1))
         if command -v is_whitelisted > /dev/null && is_whitelisted "$action"; then
             opt_msg "Skipped (whitelisted): $name"
             continue
         fi
-        announce_action "$name" "$desc" "safe"
+        announce_action "$name"
         execute_optimization "$action"
     done < <(optimize_catalog_records)
 
