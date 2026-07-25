@@ -68,3 +68,27 @@ EOF
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
 }
+
+@test "optimization task module implements every catalog handler" {
+    run env HOME="$BATS_TEST_TMPDIR/home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+if ! declare -F optimize_catalog_records >/dev/null; then
+    echo "task module did not load the optimize catalog"
+    exit 1
+fi
+handler_count=0
+while IFS='|' read -r action handler name description safe; do
+    if ! declare -F "$handler" >/dev/null; then
+        echo "missing handler for $action: $handler"
+        exit 1
+    fi
+    handler_count=$((handler_count + 1))
+done < <(optimize_catalog_records)
+[[ "$handler_count" -eq 23 ]] || exit 1
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
