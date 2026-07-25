@@ -19,3 +19,16 @@ EOF
     [[ "$output" == *"legacy_overrides_audit|opt_legacy_overrides_audit|Legacy Overrides|"* ]] || return 1
     [[ "$output" == *"login_items_audit|opt_login_items_audit|Login Items|"* ]]
 }
+
+@test "health JSON renders every catalog task once in canonical order" {
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/check/health_json.sh"
+
+catalog_actions=$(optimize_catalog_records | cut -d'|' -f1)
+json_actions=$(generate_health_json | sed -n 's/.*"action": "\([^"]*\)".*/\1/p')
+[[ "$json_actions" == "$catalog_actions" ]]
+EOF
+
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
