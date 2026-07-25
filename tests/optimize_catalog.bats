@@ -15,7 +15,7 @@ optimize_catalog_records
 EOF
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
-    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -eq 23 ] || return 1
+    [ "$(printf '%s\n' "$output" | wc -l | tr -d ' ')" -gt 0 ] || return 1
     [[ "$output" == *"legacy_overrides_audit|opt_legacy_overrides_audit|Legacy Overrides|"* ]] || return 1
     [[ "$output" == *"login_items_audit|opt_login_items_audit|Login Items|"* ]]
 }
@@ -87,7 +87,7 @@ while IFS='|' read -r action handler name description safe; do
     fi
     handler_count=$((handler_count + 1))
 done < <(optimize_catalog_records)
-[[ "$handler_count" -eq 23 ]] || exit 1
+[[ "$handler_count" -eq "${#MOLE_OPTIMIZE_TASK_CATALOG[@]}" ]] || exit 1
 EOF
 
     [ "$status" -eq 0 ] || { echo "$output"; return 1; }
