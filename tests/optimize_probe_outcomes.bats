@@ -157,3 +157,63 @@ EOF
 	[[ "$output" == *"admin access required"* ]] || return 1
 	[[ "$output" != *"UNEXPECTED_MDUTIL"* ]] || return 1
 }
+
+@test "Spotlight optimization reports failed speed probes" {
+	run env HOME="$TEST_HOME/spotlight-speed" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+run_with_timeout() {
+    if [[ "$2" == "mdutil" ]]; then
+        echo "Indexing enabled."
+        return 0
+    fi
+    return 7
+}
+is_ac_power() { return 0; }
+get_epoch_seconds() { echo 100; }
+sleep() { return 0; }
+
+execute_optimization spotlight_index_optimize
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Spotlight speed check failed (2 probe(s))"* ]] || return 1
+}
+
+@test "saved state cleanup reports a failed discovery scan" {
+	run env HOME="$TEST_HOME/saved-scan" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+mkdir -p "$HOME/Library/Saved Application State" "$HOME/bin"
+printf '#!/bin/bash\nexit 7\n' > "$HOME/bin/find"
+chmod +x "$HOME/bin/find"
+PATH="$HOME/bin:$PATH"
+
+execute_optimization saved_state_cleanup
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed to scan old saved states"* ]] || return 1
+}
+
+@test "shared file list repair reports a failed discovery scan" {
+	run env HOME="$TEST_HOME/shared-scan" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+mkdir -p "$HOME/Library/Application Support/com.apple.sharedfilelist" "$HOME/bin"
+printf '#!/bin/bash\nexit 7\n' > "$HOME/bin/find"
+chmod +x "$HOME/bin/find"
+PATH="$HOME/bin:$PATH"
+
+execute_optimization shared_file_list_repair
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed to scan shared file lists"* ]] || return 1
+}

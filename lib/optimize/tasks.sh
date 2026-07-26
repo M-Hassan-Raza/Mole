@@ -327,6 +327,16 @@ opt_saved_state_cleanup() {
     local failed=0
 
     if [[ -d "$state_dir" ]]; then
+        local scan_file=""
+        if ! scan_file=$(mktemp_file "optimize-saved-states"); then
+            echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to prepare saved state scan"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+            return 0
+        fi
+        if ! command find "$state_dir" -type d -name "*.savedState" -mtime "+$MOLE_SAVED_STATE_AGE_DAYS" -print0 > "$scan_file" 2> /dev/null; then
+            echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to scan old saved states"
+            failed=$((failed + 1))
+        fi
         while IFS= read -r -d '' state_path; do
             if should_protect_path "$state_path"; then
                 continue
@@ -336,7 +346,7 @@ opt_saved_state_cleanup() {
             else
                 failed=$((failed + 1))
             fi
-        done < <(command find "$state_dir" -type d -name "*.savedState" -mtime "+$MOLE_SAVED_STATE_AGE_DAYS" -print0 2> /dev/null)
+        done < "$scan_file"
     fi
 
     opt_msg "App saved states optimized"
@@ -932,16 +942,22 @@ opt_spotlight_index_optimize() {
         fi
 
         local slow_count=0
-        local test_start test_end test_duration probe
+        local probe_failed=0
+        local test_start test_end test_duration probe probe_status
         for probe in 1 2; do
             test_start=$(get_epoch_seconds)
             # A timeout counts as slow: an mdfind that cannot answer within
             # the probe ceiling is exactly the sluggishness being measured.
-            run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" mdfind "kMDItemFSName == 'Applications'" > /dev/null 2>&1 || true
+            set +e
+            run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" mdfind "kMDItemFSName == 'Applications'" > /dev/null 2>&1
+            probe_status=$?
+            set -e
             test_end=$(get_epoch_seconds)
             test_duration=$((test_end - test_start))
-            if [[ $test_duration -gt $slow_threshold ]]; then
+            if [[ $probe_status -eq 124 || $test_duration -gt $slow_threshold ]]; then
                 slow_count=$((slow_count + 1))
+            elif [[ $probe_status -ne 0 ]]; then
+                probe_failed=$((probe_failed + 1))
             fi
             if [[ "$probe" == "1" ]]; then
                 sleep 1
@@ -950,6 +966,12 @@ opt_spotlight_index_optimize() {
 
         if [[ "$spinner_started" == "true" ]]; then
             stop_inline_spinner
+        fi
+
+        if [[ $probe_failed -gt 0 ]]; then
+            echo -e "  ${YELLOW}${ICON_WARNING}${NC} Spotlight speed check failed ($probe_failed probe(s))"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+            return 0
         fi
 
         if [[ $slow_count -ge 2 ]]; then
@@ -1345,6 +1367,16 @@ opt_shared_file_list_repair() {
 
     local repaired=0
     local failed=0
+    local scan_file=""
+    if ! scan_file=$(mktemp_file "optimize-shared-file-lists"); then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to prepare shared file list scan"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+        return 0
+    fi
+    if ! command find "$sfl_dir" \( -name "*.sfl2" -o -name "*.sfl3" \) -type f ! -path "*ApplicationRecentDocuments*" -print0 > "$scan_file" 2> /dev/null; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to scan shared file lists"
+        failed=$((failed + 1))
+    fi
     while IFS= read -r -d '' sfl_file; do
         [[ -f "$sfl_file" ]] || continue
         # Skip recent-documents list (user data, not a cache)
@@ -1356,7 +1388,7 @@ opt_shared_file_list_repair() {
                 failed=$((failed + 1))
             fi
         fi
-    done < <(command find "$sfl_dir" \( -name "*.sfl2" -o -name "*.sfl3" \) -type f ! -path "*ApplicationRecentDocuments*" -print0 2> /dev/null || true)
+    done < "$scan_file"
 
     if [[ $repaired -gt 0 ]]; then
         opt_msg "Repaired $repaired corrupted shared file list(s)"
