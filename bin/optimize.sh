@@ -177,6 +177,7 @@ cleanup_all() {
 }
 
 handle_interrupt() {
+    trap - EXIT
     cleanup_all
     exit 130
 }

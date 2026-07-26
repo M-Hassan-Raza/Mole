@@ -1439,6 +1439,18 @@ EOF
 	[[ "$output" == *"ordered"* ]]
 }
 
+@test "optimize interrupt cleanup disables the EXIT trap before cleanup" {
+	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+body=$(sed -n '/^handle_interrupt() {/,/^}/p' "$PROJECT_ROOT/bin/optimize.sh")
+trap_line=$(printf '%s\n' "$body" | awk '/trap - EXIT/ { print NR; exit }')
+cleanup_line=$(printf '%s\n' "$body" | awk '/^[[:space:]]*cleanup_all$/ { print NR; exit }')
+[[ -n "$trap_line" && -n "$cleanup_line" && "$trap_line" -lt "$cleanup_line" ]]
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}
+
 @test "show_system_health formats floats under comma-decimal locales (#1220)" {
 	# Find an installed locale whose decimal separator is a comma.
 	local comma_locale="" candidate
