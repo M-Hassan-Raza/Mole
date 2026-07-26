@@ -33,6 +33,7 @@ if optimize_task_result invented; then
     exit 1
 fi
 
+optimize_task_start
 optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
 if optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"; then
     echo "second task outcome accepted"
@@ -50,6 +51,7 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/optimize/outcomes.sh"
 
+optimize_task_start
 if optimize_task_finish periodic_maintenance; then
     echo "missing task outcome accepted"
     exit 1
@@ -57,6 +59,7 @@ fi
 
 optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
 optimize_task_finish periodic_maintenance
+optimize_task_start
 optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
 if optimize_task_finish periodic_maintenance; then
     echo "duplicate task record accepted"

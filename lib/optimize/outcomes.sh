@@ -23,6 +23,7 @@ readonly -a MOLE_OPTIMIZE_OUTCOME_VALUES=(
 
 declare -a MOLE_OPTIMIZE_RESULT_ACTIONS=()
 declare -a MOLE_OPTIMIZE_RESULT_OUTCOMES=()
+MOLE_OPTIMIZE_TASK_ACTIVE=0
 MOLE_OPTIMIZE_TASK_OUTCOME=""
 
 _optimize_outcome_is_valid() {
@@ -39,14 +40,17 @@ _optimize_outcome_is_valid() {
 optimize_outcomes_reset() {
     MOLE_OPTIMIZE_RESULT_ACTIONS=()
     MOLE_OPTIMIZE_RESULT_OUTCOMES=()
+    MOLE_OPTIMIZE_TASK_ACTIVE=0
     MOLE_OPTIMIZE_TASK_OUTCOME=""
 }
 
 optimize_task_start() {
-    if [[ -n "$MOLE_OPTIMIZE_TASK_OUTCOME" ]]; then
-        echo "Previous optimize task outcome was not recorded" >&2
+    if [[ "$MOLE_OPTIMIZE_TASK_ACTIVE" == "1" ]]; then
+        echo "Previous optimize task was not finished" >&2
         return 1
     fi
+    MOLE_OPTIMIZE_TASK_ACTIVE=1
+    MOLE_OPTIMIZE_TASK_OUTCOME=""
 }
 
 optimize_task_result() {
@@ -56,7 +60,7 @@ optimize_task_result() {
         echo "Invalid optimize task outcome: $outcome" >&2
         return 1
     fi
-    if [[ -n "$MOLE_OPTIMIZE_TASK_OUTCOME" ]]; then
+    if [[ "$MOLE_OPTIMIZE_TASK_ACTIVE" == "1" && -n "$MOLE_OPTIMIZE_TASK_OUTCOME" ]]; then
         echo "Optimize task outcome is already set: $MOLE_OPTIMIZE_TASK_OUTCOME" >&2
         return 1
     fi
@@ -66,6 +70,10 @@ optimize_task_result() {
 optimize_task_finish() {
     local action="$1"
 
+    if [[ "$MOLE_OPTIMIZE_TASK_ACTIVE" != "1" ]]; then
+        echo "Optimize task was not started: $action" >&2
+        return 1
+    fi
     if [[ ! "$action" =~ ^[a-z0-9_]+$ ]]; then
         echo "Invalid optimize task action: $action" >&2
         return 1
@@ -87,6 +95,7 @@ optimize_task_finish() {
 
     MOLE_OPTIMIZE_RESULT_ACTIONS+=("$action")
     MOLE_OPTIMIZE_RESULT_OUTCOMES+=("$MOLE_OPTIMIZE_TASK_OUTCOME")
+    MOLE_OPTIMIZE_TASK_ACTIVE=0
     MOLE_OPTIMIZE_TASK_OUTCOME=""
 }
 
