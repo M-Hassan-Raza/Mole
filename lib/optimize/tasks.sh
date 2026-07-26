@@ -184,6 +184,12 @@ flush_dns_cache() {
 
 # Basic system maintenance.
 opt_system_maintenance() {
+    if [[ "${MOLE_DRY_RUN:-0}" != "1" ]] && ! optimize_sudo_available; then
+        opt_msg "DNS & Spotlight check skipped (admin access required)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
+        return 0
+    fi
+
     local dns_flushed="false"
     if flush_dns_cache; then
         opt_msg "DNS cache flushed"
@@ -401,6 +407,12 @@ opt_network_optimization() {
         opt_msg "DNS cache already refreshed"
         opt_msg "mDNSResponder already restarted"
         optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+        return 0
+    fi
+
+    if [[ "${MOLE_DRY_RUN:-0}" != "1" ]] && ! optimize_sudo_available; then
+        opt_msg "Network cache refresh skipped (admin access required)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
         return 0
     fi
 
@@ -1047,16 +1059,32 @@ opt_prune_spotlight_orphan_rules() {
 # touching the plist is sufficient.
 opt_dock_refresh() {
     local dock_plist="$HOME/Library/Preferences/com.apple.dock.plist"
-    if [[ -f "$dock_plist" ]]; then
-        touch "$dock_plist" 2> /dev/null || true
+    local applied=0
+    local failed=0
+
+    if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
+        applied=1
+    else
+        if [[ -f "$dock_plist" ]]; then
+            if touch "$dock_plist" 2> /dev/null; then
+                applied=$((applied + 1))
+            else
+                failed=$((failed + 1))
+            fi
+        fi
+        if killall Dock 2> /dev/null; then
+            applied=$((applied + 1))
+        else
+            failed=$((failed + 1))
+        fi
     fi
 
-    if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
-        killall Dock 2> /dev/null || true
+    if [[ $failed -eq 0 ]]; then
+        opt_msg "Dock refreshed"
+    else
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Dock refresh incomplete ($failed operation(s) failed)"
     fi
-
-    opt_msg "Dock refreshed"
-    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    optimize_task_result_from_counts "$applied" "$failed"
 }
 
 # Prevent .DS_Store on network and USB volumes.

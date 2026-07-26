@@ -19,6 +19,7 @@ teardown_file() {
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+unset MOLE_TEST_NO_AUTH MOLE_TEST_MODE
 flush_dns_cache() { return 0; }
 mdutil() { return 7; }
 
@@ -116,4 +117,43 @@ EOF
 
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 	[[ "$output" == *"Failed to inspect Knowledge database size"* ]] || return 1
+}
+
+@test "Dock refresh reports failed touch and restart commands" {
+	run env HOME="$TEST_HOME/dock" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+plist="$HOME/Library/Preferences/com.apple.dock.plist"
+mkdir -p "$(dirname "$plist")"
+command touch "$plist"
+touch() { return 9; }
+killall() { return 9; }
+
+execute_optimization dock_refresh
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count applied)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Dock refresh incomplete (2 operation(s) failed)"* ]] || return 1
+	[[ "$output" != *"Dock refreshed"* ]] || return 1
+}
+
+@test "sudo-dependent maintenance is skipped when admin access is denied" {
+	run env HOME="$TEST_HOME/admin" PROJECT_ROOT="$PROJECT_ROOT" MOLE_OPTIMIZE_SUDO_AVAILABLE=false /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+mdutil() { echo "UNEXPECTED_MDUTIL"; return 0; }
+
+execute_optimization system_maintenance
+execute_optimization network_optimization
+[[ "$(optimize_outcome_count skipped)" == "2" ]] || exit 1
+[[ "$(optimize_outcome_count failed)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"admin access required"* ]] || return 1
+	[[ "$output" != *"UNEXPECTED_MDUTIL"* ]] || return 1
 }
