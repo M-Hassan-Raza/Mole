@@ -31,3 +31,43 @@ teardown_file() {
 	[[ "$output" == *"\"items\": $applied_count"* ]] || return 1
 	[[ "$output" == *"\"failed_tasks\": 0"* ]] || return 1
 }
+
+@test "optimize failure reaches terminal exit and history contracts" {
+	local config_dir="$TEST_HOME/.config/mole"
+	local stub_dir="$TEST_HOME/bin"
+	mkdir -p "$config_dir" "$stub_dir"
+
+	run env PROJECT_ROOT="$PROJECT_ROOT" CONFIG_FILE="$config_dir/whitelist_optimize" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/optimize/catalog.sh"
+for action in "${MOLE_OPTIMIZE_ACTIONS[@]}"; do
+    [[ "$action" == "cache_refresh" ]] || printf '%s\n' "$action"
+done > "$CONFIG_FILE"
+EOF
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+
+	cat > "$stub_dir/qlmanage" <<'EOF'
+#!/bin/bash
+exit 9
+EOF
+	chmod +x "$stub_dir/qlmanage"
+
+	run env HOME="$TEST_HOME" MOLE_TEST_NO_AUTH=1 NO_COLOR=1 PATH="$stub_dir:$PATH" \
+		"$PROJECT_ROOT/mole" optimize
+	[[ "$status" -eq 1 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"1 failed"* ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed to rebuild 2 Finder cache service(s)"* ]] || return 1
+
+	run env HOME="$TEST_HOME" "$PROJECT_ROOT/mole" history --json
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	printf '%s\n' "$output" | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+session = data["sessions"][0]
+assert session["command"] == "optimize"
+assert session["items"] == 0
+assert session["failed_tasks"] == 1
+'
+}
