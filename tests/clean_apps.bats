@@ -611,7 +611,9 @@ EOF
 }
 
 @test "clean_orphaned_system_services respects dry-run" {
-    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" DRY_RUN=true MOLE_DRY_RUN=1 /bin/bash --noprofile --norc <<'EOF'
+    # Without MOLE_TEST_MODE=0 the sweep early-returns under setup_file's
+    # MOLE_TEST_MODE=1, leaving $output empty and both negative assertions true.
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=0 DRY_RUN=true MOLE_DRY_RUN=1 /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/clean/apps.sh"
@@ -623,7 +625,20 @@ debug_log() { :; }
 
 tmp_dir="$(mktemp -d)"
 tmp_plist="$tmp_dir/com.sogou.test.plist"
-touch "$tmp_plist"
+# An empty file is never classified as an orphan, so the sweep found nothing and
+# the dry-run branch under test never ran.
+cat > "$tmp_plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sogou.test</string>
+    <key>Program</key>
+    <string>$tmp_dir/missing-binary</string>
+</dict>
+</plist>
+PLIST
 
 sudo() {
   if [[ "$1" == "-n" && "$2" == "true" ]]; then
@@ -654,7 +669,10 @@ EOF
 
     [ "$status" -eq 0 ]
     [[ "$output" != *"rm-called"* ]] || return 1
-    [[ "$output" != *"launchctl-called"* ]]
+    [[ "$output" != *"launchctl-called"* ]] || return 1
+    # Positive control: every other assertion here is true on empty output, so
+    # without this the test cannot distinguish "dry-run behaved" from "nothing ran".
+    [[ "$output" == *"Orphaned services · "*" found dry"* ]]
 }
 
 @test "clean_orphaned_system_services reads unreadable plists through sudo PlistBuddy" {
@@ -807,13 +825,28 @@ note_activity() { :; }
 debug_log() { :; }
 bundle_has_installed_app() { return 1; }
 safe_sudo_remove() {
-  echo "unexpected-remove"
+  echo "removed:$1"
   return 0
 }
 
+# Routed through /Library/LaunchDaemons, which exists on every macOS box. The
+# PrivilegedHelperTools scan is guarded by [[ -d /Library/PrivilegedHelperTools ]]
+# in lib/clean/apps.sh, and that directory is absent on GitHub runners, so a
+# helper fixture makes this case find nothing and pass vacuously in CI.
 tmp_dir="$(mktemp -d)"
-tmp_helper="$tmp_dir/org.amnezia.awg"
-touch "$tmp_helper"
+tmp_helper="$tmp_dir/org.amnezia.awg.plist"
+cat > "$tmp_helper" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>org.amnezia.awg</string>
+    <key>Program</key>
+    <string>$tmp_dir/missing-binary</string>
+</dict>
+</plist>
+PLIST
 
 sudo() {
   if [[ "$1" == "-n" && "$2" == "true" ]]; then
@@ -822,7 +855,7 @@ sudo() {
   [[ "${1:-}" == "-n" ]] && shift
   if [[ "$1" == "find" ]]; then
     case "$2" in
-      /Library/PrivilegedHelperTools) printf '%s\0' "$tmp_helper" ;;
+      /Library/LaunchDaemons) printf '%s\0' "$tmp_helper" ;;
       *) : ;;
     esac
     return 0
@@ -832,7 +865,7 @@ sudo() {
     return 0
   fi
   if [[ "$1" == "launchctl" ]]; then
-    echo "unexpected-launchctl"
+    echo "launchctl-unload:$*"
     return 0
   fi
   command "$@"
@@ -843,8 +876,10 @@ EOF
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"Orphaned services · cleaned 1"* ]] || return 1
-    [[ "$output" == *"unexpected-remove"* ]] || return 1
-    [[ "$output" != *"unexpected-launchctl"* ]]
+    [[ "$output" == *"removed:"*"org.amnezia.awg.plist"* ]] || return 1
+    # A LaunchDaemon orphan is unloaded before removal, so this call is the
+    # expected order rather than a stray one.
+    [[ "$output" == *"launchctl-unload:"*"org.amnezia.awg.plist"* ]]
 }
 
 @test "_privileged_helper_bundle_id_from_binary prefers Info.plist bundle ID over directory and executable names" {
