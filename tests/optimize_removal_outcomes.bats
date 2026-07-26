@@ -34,6 +34,24 @@ EOF
 	[[ "$output" == *"Failed to remove 1 Finder cache target(s)"* ]] || return 1
 }
 
+@test "cache refresh reports failed rebuild commands" {
+	run env HOME="$TEST_HOME/cache-command" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+qlmanage() { return 9; }
+
+execute_optimization cache_refresh
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count applied)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed to rebuild 2 Finder cache service(s)"* ]] || return 1
+	[[ "$output" != *"QuickLook thumbnails refreshed"* ]] || return 1
+}
+
 @test "saved state cleanup reports a failed removal" {
 	run env HOME="$TEST_HOME/saved-state" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail

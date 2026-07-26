@@ -201,7 +201,10 @@ opt_system_maintenance() {
 opt_cache_refresh() {
     local cleaned_cache_size=0
     local removed_count=0
-    local failed=0
+    local remove_failed=0
+    local refresh_failed=0
+    local quicklook_refreshed=0
+    local icons_refreshed=0
 
     local -a cache_targets=(
         "$HOME/Library/Caches/com.apple.QuickLook.thumbnailcache"
@@ -215,9 +218,20 @@ opt_cache_refresh() {
         debug_risk_level "LOW" "Caches are automatically rebuilt"
     fi
 
-    if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
-        qlmanage -r cache > /dev/null 2>&1 || true
-        qlmanage -r > /dev/null 2>&1 || true
+    if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
+        quicklook_refreshed=1
+        icons_refreshed=1
+    else
+        if qlmanage -r cache > /dev/null 2>&1; then
+            quicklook_refreshed=1
+        else
+            refresh_failed=$((refresh_failed + 1))
+        fi
+        if qlmanage -r > /dev/null 2>&1; then
+            icons_refreshed=1
+        else
+            refresh_failed=$((refresh_failed + 1))
+        fi
     fi
 
     local -a removable_targets=()
@@ -256,17 +270,26 @@ opt_cache_refresh() {
             removed_count=$((removed_count + 1))
             cleaned_cache_size=$((cleaned_cache_size + removable_sizes[index]))
         else
-            failed=$((failed + 1))
+            remove_failed=$((remove_failed + 1))
         fi
     done
 
     export OPTIMIZE_CACHE_CLEANED_KB="${cleaned_cache_size}"
-    opt_msg "QuickLook thumbnails refreshed"
-    opt_msg "Icon services cache rebuilt"
-    if [[ $failed -gt 0 ]]; then
-        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to remove $failed Finder cache target(s)"
+    if [[ $quicklook_refreshed -eq 1 ]]; then
+        opt_msg "QuickLook thumbnails refreshed"
     fi
-    optimize_task_result_from_counts "$((removed_count + 1))" "$failed"
+    if [[ $icons_refreshed -eq 1 ]]; then
+        opt_msg "Icon services cache rebuilt"
+    fi
+    if [[ $remove_failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to remove $remove_failed Finder cache target(s)"
+    fi
+    if [[ $refresh_failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to rebuild $refresh_failed Finder cache service(s)"
+    fi
+    optimize_task_result_from_counts \
+        "$((removed_count + quicklook_refreshed + icons_refreshed))" \
+        "$((remove_failed + refresh_failed))"
 }
 
 # Removed: opt_maintenance_scripts - macOS handles log rotation automatically via launchd
