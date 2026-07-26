@@ -8,16 +8,25 @@ if [[ -n "${MOLE_OPTIMIZE_OUTCOMES_LOADED:-}" ]]; then
 fi
 readonly MOLE_OPTIMIZE_OUTCOMES_LOADED=1
 
+# A task reports exactly one of these outcomes during a dispatched run:
+# applied: a change completed, or would complete in dry-run mode.
+# unchanged: inspection completed and no change was needed.
+# skipped: policy or run context intentionally prevented execution.
+# unavailable: the host does not provide the required capability.
+# attention: inspection completed and found an issue requiring user action.
+# failed: an eligible operation could not complete.
 readonly MOLE_OPTIMIZE_OUTCOME_APPLIED="applied"
 readonly MOLE_OPTIMIZE_OUTCOME_UNCHANGED="unchanged"
 readonly MOLE_OPTIMIZE_OUTCOME_SKIPPED="skipped"
 readonly MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE="unavailable"
+readonly MOLE_OPTIMIZE_OUTCOME_ATTENTION="attention"
 readonly MOLE_OPTIMIZE_OUTCOME_FAILED="failed"
 readonly -a MOLE_OPTIMIZE_OUTCOME_VALUES=(
     "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
     "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
+    "$MOLE_OPTIMIZE_OUTCOME_ATTENTION"
     "$MOLE_OPTIMIZE_OUTCOME_FAILED"
 )
 
@@ -32,6 +41,7 @@ _optimize_outcome_is_valid() {
             "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" | \
             "$MOLE_OPTIMIZE_OUTCOME_SKIPPED" | \
             "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE" | \
+            "$MOLE_OPTIMIZE_OUTCOME_ATTENTION" | \
             "$MOLE_OPTIMIZE_OUTCOME_FAILED") return 0 ;;
         *) return 1 ;;
     esac

@@ -23,6 +23,23 @@ EOF
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 }
 
+@test "optimize outcomes distinguish unresolved attention from failure" {
+	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/optimize/outcomes.sh"
+
+optimize_outcomes_reset
+optimize_task_start
+optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_ATTENTION"
+optimize_task_finish login_items_audit
+
+[[ "$(optimize_outcome_count attention)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count failed)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}
+
 @test "optimize outcomes reject invalid and duplicate task results" {
 	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
