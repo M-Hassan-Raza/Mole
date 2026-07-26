@@ -335,14 +335,12 @@ opt_fix_broken_configs() {
         else
             opt_msg "Repaired $broken_prefs corrupted preference files"
         fi
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     elif [[ $prefs_partial -ne 0 ]]; then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Preference scan hit its time budget, repaired ${broken_prefs:-0} so far"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
     else
         opt_msg "All preference files valid"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     fi
+    optimize_task_result_from_counts "$broken_prefs" "$prefs_partial"
 }
 
 # DNS cache refresh.
@@ -576,13 +574,7 @@ opt_sqlite_vacuum() {
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed on $failed databases"
     fi
 
-    if [[ $vacuumed -gt 0 ]]; then
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-    elif [[ $timed_out -gt 0 || $failed -gt 0 ]]; then
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
-    else
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
-    fi
+    optimize_task_result_from_counts "$vacuumed" "$((timed_out + failed))"
 }
 
 # LaunchServices rebuild ("Open with" issues).
@@ -1103,15 +1095,7 @@ opt_legacy_overrides_audit() {
         fi
     done
 
-    if [[ $changed -gt 0 ]]; then
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-    elif [[ $failed -gt 0 ]]; then
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
-    elif [[ $skipped -gt 0 ]]; then
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
-    else
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
-    fi
+    optimize_task_result_from_counts "$changed" "$failed" "$skipped"
 }
 
 # True unless the path lives on an unmounted /Volumes/<disk>. A LaunchAgent

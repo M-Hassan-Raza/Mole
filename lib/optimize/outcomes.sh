@@ -77,6 +77,32 @@ optimize_task_result() {
     MOLE_OPTIMIZE_TASK_OUTCOME="$outcome"
 }
 
+# Resolve one task-level outcome from sub-operation counts. Any failed eligible
+# operation makes the task failed, even when another sub-operation succeeded.
+optimize_task_result_from_counts() {
+    local applied="$1"
+    local failed="$2"
+    local skipped="${3:-0}"
+    local count
+
+    for count in "$applied" "$failed" "$skipped"; do
+        if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+            echo "Invalid optimize task count: $count" >&2
+            return 1
+        fi
+    done
+
+    if [[ "$failed" -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+    elif [[ "$applied" -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    elif [[ "$skipped" -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
+    else
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+    fi
+}
+
 optimize_task_finish() {
     local action="$1"
 

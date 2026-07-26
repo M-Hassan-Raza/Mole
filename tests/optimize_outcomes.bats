@@ -40,6 +40,23 @@ EOF
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 }
 
+@test "optimize outcome counts give failures precedence over partial changes" {
+	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/optimize/outcomes.sh"
+
+optimize_outcomes_reset
+optimize_task_start
+optimize_task_result_from_counts 2 1 0
+optimize_task_finish sqlite_vacuum
+
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count applied)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}
+
 @test "optimize outcomes reject invalid and duplicate task results" {
 	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail

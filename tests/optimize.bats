@@ -387,6 +387,40 @@ EOF
 	[[ "$output" == *"sqlite3 unavailable"* ]]
 }
 
+@test "opt_sqlite_vacuum reports failed when only some databases optimize" {
+	run env HOME="$HOME/sqlite-partial" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+mkdir -p "$HOME/Library/Messages" "$HOME/Library/Safari"
+touch "$HOME/Library/Messages/chat.db" "$HOME/Library/Safari/History.db"
+pgrep() { return 1; }
+file() { echo "SQLite 3.x database"; }
+get_file_size() { echo 1; }
+run_with_timeout() {
+    shift
+    "$@"
+}
+sqlite3() {
+    case "$2" in
+        "PRAGMA page_count; PRAGMA freelist_count;") printf '100\n10\n' ;;
+        "PRAGMA integrity_check;") echo "ok" ;;
+        "VACUUM;") [[ "$1" == *"chat.db" ]] ;;
+    esac
+}
+export -f pgrep file get_file_size run_with_timeout sqlite3
+
+execute_optimization sqlite_vacuum
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count applied)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Optimized 1 databases"* ]] || return 1
+	[[ "$output" == *"Failed on 1 databases"* ]] || return 1
+}
+
 @test "optimize does not auto-fix Gatekeeper anymore" {
 	run grep -n "spctl --master-enable\\|SECURITY_FIXES+=([\"']gatekeeper|" "$PROJECT_ROOT/bin/optimize.sh"
 
@@ -528,6 +562,30 @@ EOF
 	[ "$status" -eq 0 ] || return 1
 	[[ "$output" == *"Skipped (whitelisted): App Nap disabled globally"* ]] || return 1
 	[[ "$output" != *"DELETE_CALLED"* ]] || return 1
+}
+
+@test "opt_legacy_overrides_audit reports failed after a partial repair" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+defaults() {
+    if [[ "$1" == "read" ]]; then
+        echo "1"
+        return 0
+    fi
+    [[ "$3" == "NSAppSleepDisabled" ]]
+}
+export -f defaults
+
+execute_optimization legacy_overrides_audit
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count applied)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Removed override: App Nap disabled globally"* ]] || return 1
+	[[ "$output" == *"Could not remove override"* ]] || return 1
 }
 
 # cc31ee3a ("Remove optimize confirmation prompt, run all tasks automatically")
