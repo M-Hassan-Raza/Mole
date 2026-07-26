@@ -66,7 +66,11 @@ optimize_task_result() {
         echo "Invalid optimize task outcome: $outcome" >&2
         return 1
     fi
-    if [[ "$MOLE_OPTIMIZE_TASK_ACTIVE" == "1" && -n "$MOLE_OPTIMIZE_TASK_OUTCOME" ]]; then
+    if [[ "$MOLE_OPTIMIZE_TASK_ACTIVE" != "1" ]]; then
+        echo "Optimize task was not started" >&2
+        return 1
+    fi
+    if [[ -n "$MOLE_OPTIMIZE_TASK_OUTCOME" ]]; then
         echo "Optimize task outcome is already set: $MOLE_OPTIMIZE_TASK_OUTCOME" >&2
         return 1
     fi

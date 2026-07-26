@@ -101,12 +101,10 @@ route() { return 0; }
 dscacheutil() { return 0; }
 needs_permissions_repair() { return 1; }
 
-opt_memory_pressure_relief
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
-opt_network_stack_optimize
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
-opt_disk_permissions_repair
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
+execute_optimization memory_pressure_relief
+execute_optimization network_stack_optimize
+execute_optimization disk_permissions_repair
+[[ "$(optimize_outcome_count unchanged)" == "3" ]] || exit 1
 EOF
 
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
@@ -122,7 +120,7 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 flush_dns_cache() { return 0; }
 mdutil() { echo "Indexing enabled."; }
-opt_system_maintenance
+execute_optimization system_maintenance
 EOF
 
 	[ "$status" -eq 0 ]
@@ -136,7 +134,7 @@ set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 flush_dns_cache() { return 0; }
-opt_network_optimization
+execute_optimization network_optimization
 EOF
 
 	[ "$status" -eq 0 ]
@@ -273,7 +271,7 @@ touch "$prefs/com.example.slow.plist"
 
 plutil() { return 0; }
 
-opt_fix_broken_configs
+execute_optimization fix_broken_configs
 EOF
 
 	[ "$status" -eq 0 ]
@@ -303,7 +301,7 @@ safe_remove() {
     echo "remove:$1:${3:-missing}" >> "$CALL_LOG"
 }
 
-opt_cache_refresh
+execute_optimization cache_refresh
 echo "cleaned=${OPTIMIZE_CACHE_CLEANED_KB:-missing}"
 cat "$CALL_LOG"
 EOF
@@ -320,7 +318,7 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-opt_quarantine_cleanup
+execute_optimization quarantine_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -340,7 +338,7 @@ local_db="$HOME/Library/Preferences/com.apple.LaunchServices.QuarantineEventsV2"
 sqlite3 "$local_db" "CREATE TABLE IF NOT EXISTS LSQuarantineEvent (id TEXT);"
 sqlite3 "$local_db" "INSERT INTO LSQuarantineEvent VALUES ('test1');"
 sqlite3 "$local_db" "INSERT INTO LSQuarantineEvent VALUES ('test2');"
-opt_quarantine_cleanup
+execute_optimization quarantine_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -354,7 +352,7 @@ set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 export PATH="/nonexistent"
-opt_quarantine_cleanup
+execute_optimization quarantine_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -382,7 +380,7 @@ set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 export PATH="/nonexistent"
-opt_sqlite_vacuum
+execute_optimization sqlite_vacuum
 EOF
 
 	[ "$status" -eq 0 ]
@@ -400,7 +398,7 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-opt_dock_refresh
+execute_optimization dock_refresh
 EOF
 
 	[ "$status" -eq 0 ]
@@ -418,7 +416,7 @@ defaults() {
         write) return 0 ;;
     esac
 }
-opt_prevent_network_dsstore
+execute_optimization prevent_network_dsstore
 EOF
 
 	[ "$status" -eq 0 ]
@@ -437,7 +435,7 @@ defaults() {
     fi
     return 0
 }
-opt_prevent_network_dsstore
+execute_optimization prevent_network_dsstore
 EOF
 
 	[ "$status" -eq 0 ]
@@ -454,7 +452,7 @@ defaults() {
     echo "DELETE_CALLED:$*"
     return 0
 }
-opt_legacy_overrides_audit
+execute_optimization legacy_overrides_audit
 EOF
 
 	[ "$status" -eq 0 ] || return 1
@@ -478,7 +476,7 @@ defaults() {
     echo "DELETE_CALLED:$2 $3"
     return 0
 }
-opt_legacy_overrides_audit
+execute_optimization legacy_overrides_audit
 EOF
 
 	[ "$status" -eq 0 ] || return 1
@@ -502,7 +500,7 @@ defaults() {
     echo "DELETE_CALLED:$*"
     return 0
 }
-opt_legacy_overrides_audit
+execute_optimization legacy_overrides_audit
 EOF
 
 	[ "$status" -eq 0 ] || return 1
@@ -524,7 +522,7 @@ defaults() {
     return 0
 }
 is_path_whitelisted() { [[ "$1" == *".GlobalPreferences.plist" ]]; }
-opt_legacy_overrides_audit
+execute_optimization legacy_overrides_audit
 EOF
 
 	[ "$status" -eq 0 ] || return 1
@@ -617,7 +615,7 @@ defaults() {
     esac
 }
 bundle_has_installed_app() { [[ "$1" == "com.installed.App" ]]; }
-opt_prune_spotlight_orphan_rules
+execute_optimization spotlight_orphan_rules_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -649,7 +647,7 @@ defaults() {
     esac
 }
 bundle_has_installed_app() { return 1; }
-opt_prune_spotlight_orphan_rules
+execute_optimization spotlight_orphan_rules_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -679,7 +677,7 @@ defaults() {
     esac
 }
 bundle_has_installed_app() { return 0; }
-opt_prune_spotlight_orphan_rules
+execute_optimization spotlight_orphan_rules_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -699,7 +697,7 @@ PATH="$STUB:$PATH"
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 is_ac_power() { return 0; }
-opt_spotlight_index_optimize
+execute_optimization spotlight_index_optimize
 echo "probes=$(wc -l < "$HOME/mdfind-calls.log" | tr -d ' ')"
 EOF
 
@@ -720,7 +718,7 @@ PATH="$STUB:$PATH"
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 is_ac_power() { return 1; }
-opt_spotlight_index_optimize
+execute_optimization spotlight_index_optimize
 [[ -f "$HOME/mdfind-battery.log" ]] && echo "probed" || echo "no-probe"
 EOF
 
@@ -741,7 +739,7 @@ PATH="$STUB:$PATH"
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 is_ac_power() { return 0; }
-opt_spotlight_index_optimize
+execute_optimization spotlight_index_optimize
 EOF
 
 	[ "$status" -eq 0 ]
@@ -754,7 +752,7 @@ set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 defaults() { return 1; }
-opt_prune_spotlight_orphan_rules
+execute_optimization spotlight_orphan_rules_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -785,7 +783,7 @@ get_lsregister_path() {
     echo ""
     return 0
 }
-opt_launch_services_rebuild
+execute_optimization launch_services_rebuild
 echo "survived"
 EOF
 
@@ -799,7 +797,7 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-opt_launch_agents_cleanup
+execute_optimization launch_agents_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -828,7 +826,7 @@ cat > "$HOME/Library/LaunchAgents/com.test.broken.plist" <<'PLIST'
 </plist>
 PLIST
 safe_remove() { return 0; }
-opt_launch_agents_cleanup
+execute_optimization launch_agents_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -858,7 +856,7 @@ cat > "$HOME/Library/LaunchAgents/com.test.healthy.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-opt_launch_agents_cleanup
+execute_optimization launch_agents_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -889,7 +887,7 @@ cat > "$HOME/Library/LaunchAgents/com.test.external.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
-opt_launch_agents_cleanup
+execute_optimization launch_agents_cleanup
 EOF
 
 	[ "$status" -eq 0 ]
@@ -920,8 +918,8 @@ periodic() { true; }
 export -f periodic
 tmplog="$(mktemp /tmp/mole-test-daily.XXXXXX)"
 touch "$tmplog"
-MOLE_PERIODIC_LOG="$tmplog" opt_periodic_maintenance
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
+MOLE_PERIODIC_LOG="$tmplog" execute_optimization periodic_maintenance
+[[ "$(optimize_outcome_count unchanged)" == "1" ]] || exit 1
 rm -f "$tmplog"
 EOF
 
@@ -945,8 +943,8 @@ STAT
 chmod +x "$tmpdir/bin/stat"
 tmplog="$tmpdir/daily.out"
 touch "$tmplog"
-PATH="$tmpdir/bin:$PATH" MOLE_PERIODIC_LOG="$tmplog" opt_periodic_maintenance
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
+PATH="$tmpdir/bin:$PATH" MOLE_PERIODIC_LOG="$tmplog" execute_optimization periodic_maintenance
+[[ "$(optimize_outcome_count unchanged)" == "1" ]] || exit 1
 rm -rf "$tmpdir"
 EOF
 
@@ -964,8 +962,8 @@ periodic() { true; }
 export -f periodic
 tmplog="$(mktemp /tmp/mole-test-daily.XXXXXX)"
 touch -t "$(date -v-10d +%Y%m%d%H%M.%S)" "$tmplog"
-MOLE_PERIODIC_LOG="$tmplog" opt_periodic_maintenance
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_APPLIED" ]] || exit 1
+MOLE_PERIODIC_LOG="$tmplog" execute_optimization periodic_maintenance
+[[ "$(optimize_outcome_count applied)" == "1" ]] || exit 1
 rm -f "$tmplog"
 EOF
 
@@ -980,8 +978,8 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 periodic() { true; }
 export -f periodic
-MOLE_PERIODIC_LOG="/tmp/mole-test-nonexistent-daily.out" opt_periodic_maintenance
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_APPLIED" ]] || exit 1
+MOLE_PERIODIC_LOG="/tmp/mole-test-nonexistent-daily.out" execute_optimization periodic_maintenance
+[[ "$(optimize_outcome_count applied)" == "1" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
@@ -995,8 +993,8 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 periodic() { true; }
 export -f periodic
-MOLE_PERIODIC_LOG="$HOME/missing-daily.out" opt_periodic_maintenance
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_SKIPPED" ]] || exit 1
+MOLE_PERIODIC_LOG="$HOME/missing-daily.out" execute_optimization periodic_maintenance
+[[ "$(optimize_outcome_count skipped)" == "1" ]] || exit 1
 EOF
 
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
@@ -1011,8 +1009,8 @@ source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 periodic() { true; }
 sudo() { return 7; }
 export -f periodic sudo
-MOLE_PERIODIC_LOG="$HOME/missing-daily.out" opt_periodic_maintenance
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_FAILED" ]] || exit 1
+MOLE_PERIODIC_LOG="$HOME/missing-daily.out" execute_optimization periodic_maintenance
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
 EOF
 
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
@@ -1213,8 +1211,8 @@ command() {
     builtin command "$@"
 }
 export -f command
-opt_periodic_maintenance
-[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE" ]] || exit 1
+execute_optimization periodic_maintenance
+[[ "$(optimize_outcome_count unavailable)" == "1" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
@@ -1479,10 +1477,10 @@ opt_msg() { :; }
 start_inline_spinner() { :; }
 stop_inline_spinner() { :; }
 
-opt_memory_pressure_relief 2>&1 || true
-opt_network_stack_optimize 2>&1 || true
-opt_disk_permissions_repair 2>&1 || true
-opt_periodic_maintenance 2>&1 || true
+execute_optimization memory_pressure_relief 2>&1 || true
+execute_optimization network_stack_optimize 2>&1 || true
+execute_optimization disk_permissions_repair 2>&1 || true
+execute_optimization periodic_maintenance 2>&1 || true
 flush_dns_cache 2>&1 || true
 
 if [[ -s "$trace" ]]; then
@@ -1676,7 +1674,7 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 killall() { return 0; }
 export -f killall
-opt_dock_refresh
+execute_optimization dock_refresh
 EOF
 
 	[ "$status" -eq 0 ]

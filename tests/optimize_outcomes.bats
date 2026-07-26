@@ -63,6 +63,21 @@ EOF
 	[[ "$output" == *"Optimize task outcome is already set: unchanged"* ]] || return 1
 }
 
+@test "optimize outcomes reject results outside an active task" {
+	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/optimize/outcomes.sh"
+
+if optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"; then
+    echo "inactive task outcome accepted"
+    exit 1
+fi
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Optimize task was not started"* ]] || return 1
+}
+
 @test "optimize outcomes reject missing and duplicate task records" {
 	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
