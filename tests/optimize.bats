@@ -578,6 +578,19 @@ source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 execute_optimization unknown_action
 EOF
 
+	[ "$status" -eq 1 ] || return 1
+	[[ "$output" == *"Unknown action"* ]] || return 1
+}
+
+@test "execute_optimization rejects unknown action before whitelist policy" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+is_whitelisted() { return 0; }
+execute_optimization unknown_action
+EOF
+
 	[ "$status" -eq 1 ]
 	[[ "$output" == *"Unknown action"* ]]
 }

@@ -1617,14 +1617,6 @@ opt_login_items_audit() {
 execute_optimization() {
     local action="$1"
 
-    if command -v is_whitelisted > /dev/null && is_whitelisted "$action"; then
-        optimize_task_start
-        opt_msg "Skipped (whitelisted): $action"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
-        optimize_task_finish "$action"
-        return 0
-    fi
-
     local handler
     if ! handler=$(optimize_catalog_handler_for "$action"); then
         echo -e "${YELLOW}${ICON_ERROR}${NC} Unknown action: $action"
@@ -1633,6 +1625,14 @@ execute_optimization() {
     if ! declare -F "$handler" > /dev/null; then
         echo -e "${YELLOW}${ICON_ERROR}${NC} Missing optimization handler: $handler"
         return 1
+    fi
+
+    if command -v is_whitelisted > /dev/null && is_whitelisted "$action"; then
+        optimize_task_start
+        opt_msg "Skipped (whitelisted): $action"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
+        optimize_task_finish "$action"
+        return 0
     fi
 
     optimize_task_start
