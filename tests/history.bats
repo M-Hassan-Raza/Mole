@@ -81,6 +81,42 @@ assert data["deletions"][1]["path"] == "/tmp/Old App.app"
 '
 }
 
+@test "mo history preserves failed optimize task counts" {
+    cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
+# ========== optimize session started at 2026-05-24 12:00:00 ==========
+# ========== optimize session ended at 2026-05-24 12:00:05, 3 items, 0B, 2 failed tasks ==========
+EOF
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"2 optimize tasks failed"* ]] || return 1
+
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json
+import sys
+
+data = json.load(sys.stdin)
+assert data["sessions"][0]["command"] == "optimize"
+assert data["sessions"][0]["items"] == 3
+assert data["sessions"][0]["failed_tasks"] == 2
+'
+}
+
+@test "operation session logging writes failed task counts" {
+    local log_file="$HOME/Library/Logs/mole/session-end.log"
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" OPERATIONS_LOG_FILE="$log_file" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+log_operation_session_end optimize 3 0 2
+cat "$OPERATIONS_LOG_FILE"
+EOF
+
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    [[ "$output" == *", 3 items, 0B, 2 failed tasks =========="* ]] || return 1
+}
+
 @test "mo history --json escapes unusual path characters" {
     : > "$HOME/Library/Logs/mole/operations.log"
     weird_path=$'/tmp/unicode-\xe9\x9b\xaa-quote"slash\\tab\tbackspace\bformfeed\fend'

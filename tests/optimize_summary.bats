@@ -29,4 +29,5 @@ teardown_file() {
 	run env HOME="$TEST_HOME" "$PROJECT_ROOT/mole" history --json
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 	[[ "$output" == *"\"items\": $applied_count"* ]] || return 1
+	[[ "$output" == *"\"failed_tasks\": 0"* ]] || return 1
 }
