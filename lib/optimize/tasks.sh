@@ -199,7 +199,9 @@ opt_system_maintenance() {
 
 # Refresh Finder caches (QuickLook/icon services).
 opt_cache_refresh() {
-    local total_cache_size=0
+    local cleaned_cache_size=0
+    local removed_count=0
+    local failed=0
 
     local -a cache_targets=(
         "$HOME/Library/Caches/com.apple.QuickLook.thumbnailcache"
@@ -230,7 +232,6 @@ opt_cache_refresh() {
         size_kb=$(opt_existing_path_size_kb "$target_path")
         removable_targets+=("$target_path")
         removable_sizes+=("$size_kb")
-        total_cache_size=$((total_cache_size + size_kb))
     done
 
     if [[ "${MO_DEBUG:-}" == "1" ]]; then
@@ -251,13 +252,21 @@ opt_cache_refresh() {
 
     local index
     for index in "${!removable_targets[@]}"; do
-        safe_remove "${removable_targets[$index]}" true "${removable_sizes[$index]}" > /dev/null 2>&1 || true
+        if safe_remove "${removable_targets[$index]}" true "${removable_sizes[$index]}" > /dev/null 2>&1; then
+            removed_count=$((removed_count + 1))
+            cleaned_cache_size=$((cleaned_cache_size + removable_sizes[index]))
+        else
+            failed=$((failed + 1))
+        fi
     done
 
-    export OPTIMIZE_CACHE_CLEANED_KB="${total_cache_size}"
+    export OPTIMIZE_CACHE_CLEANED_KB="${cleaned_cache_size}"
     opt_msg "QuickLook thumbnails refreshed"
     opt_msg "Icon services cache rebuilt"
-    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    if [[ $failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to remove $failed Finder cache target(s)"
+    fi
+    optimize_task_result_from_counts "$((removed_count + 1))" "$failed"
 }
 
 # Removed: opt_maintenance_scripts - macOS handles log rotation automatically via launchd
@@ -276,6 +285,7 @@ opt_saved_state_cleanup() {
 
     local state_dir="$HOME/Library/Saved Application State"
     local removed=0
+    local failed=0
 
     if [[ -d "$state_dir" ]]; then
         while IFS= read -r -d '' state_path; do
@@ -284,16 +294,17 @@ opt_saved_state_cleanup() {
             fi
             if safe_remove "$state_path" true > /dev/null 2>&1; then
                 removed=$((removed + 1))
+            else
+                failed=$((failed + 1))
             fi
         done < <(command find "$state_dir" -type d -name "*.savedState" -mtime "+$MOLE_SAVED_STATE_AGE_DAYS" -print0 2> /dev/null)
     fi
 
     opt_msg "App saved states optimized"
-    if [[ $removed -gt 0 ]]; then
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-    else
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+    if [[ $failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to remove $failed old saved state(s)"
     fi
+    optimize_task_result_from_counts "$removed" "$failed"
 }
 
 # Removed: opt_swap_cleanup - Direct virtual memory operations pose system crash risk
@@ -1152,13 +1163,24 @@ opt_launch_agents_cleanup() {
         return 0
     fi
 
+    local removed_count=0
+    local failed=0
     for plist in "${broken_plists[@]}"; do
         run_launchctl_unload "$plist"
-        safe_remove "$plist" true > /dev/null 2>&1 || true
+        if safe_remove "$plist" true > /dev/null 2>&1; then
+            removed_count=$((removed_count + 1))
+        else
+            failed=$((failed + 1))
+        fi
     done
 
-    opt_msg "Cleaned $broken_count broken Launch Agent(s)"
-    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    if [[ $removed_count -gt 0 ]]; then
+        opt_msg "Cleaned $removed_count broken Launch Agent(s)"
+    fi
+    if [[ $failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to remove $failed broken Launch Agent(s)"
+    fi
+    optimize_task_result_from_counts "$removed_count" "$failed"
 }
 
 # macOS periodic maintenance scripts (daily/weekly/monthly).
@@ -1224,25 +1246,29 @@ opt_shared_file_list_repair() {
     fi
 
     local repaired=0
+    local failed=0
     while IFS= read -r -d '' sfl_file; do
         [[ -f "$sfl_file" ]] || continue
         # Skip recent-documents list (user data, not a cache)
         [[ "$sfl_file" == *"ApplicationRecentDocuments"* ]] && continue
         if ! plutil -lint "$sfl_file" > /dev/null 2>&1; then
-            if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
-                safe_remove "$sfl_file" true > /dev/null 2>&1 || true
+            if [[ "${MOLE_DRY_RUN:-0}" == "1" ]] || safe_remove "$sfl_file" true > /dev/null 2>&1; then
+                repaired=$((repaired + 1))
+            else
+                failed=$((failed + 1))
             fi
-            repaired=$((repaired + 1))
         fi
     done < <(command find "$sfl_dir" \( -name "*.sfl2" -o -name "*.sfl3" \) -type f ! -path "*ApplicationRecentDocuments*" -print0 2> /dev/null || true)
 
     if [[ $repaired -gt 0 ]]; then
         opt_msg "Repaired $repaired corrupted shared file list(s)"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-    else
+    elif [[ $failed -eq 0 ]]; then
         opt_msg "Shared file lists all healthy"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     fi
+    if [[ $failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to repair $failed corrupted shared file list(s)"
+    fi
+    optimize_task_result_from_counts "$repaired" "$failed"
 }
 
 # Clean old delivered notifications from NotificationCenter database.
@@ -1364,8 +1390,11 @@ opt_coreduet_cleanup() {
 
     if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
         # Remove WAL and SHM files safely (auto-regenerated by SQLite)
+        local remove_failed=0
         for f in "$wal_file" "$shm_file"; do
-            [[ -f "$f" ]] && safe_remove "$f" true > /dev/null 2>&1 || true
+            if [[ -f "$f" ]] && ! safe_remove "$f" true > /dev/null 2>&1; then
+                remove_failed=$((remove_failed + 1))
+            fi
         done
         # Remove ZOBJECT entries older than 90 days (CoreTime is Mac epoch: seconds since 2001-01-01)
         if command -v sqlite3 > /dev/null 2>&1; then
@@ -1373,16 +1402,23 @@ opt_coreduet_cleanup() {
             sqlite3 "$knowledge_db" \
                 "DELETE FROM ZOBJECT WHERE ZCREATIONDATE < (strftime('%s','now','-90 days') - strftime('%s','2001-01-01')); VACUUM;" \
                 2> /dev/null || sql_ok=$?
-            if [[ $sql_ok -eq 0 ]]; then
-                opt_msg "Knowledge database cleaned (was $(bytes_to_human $((total_size * 1024))))"
-                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-            else
+            if [[ $sql_ok -ne 0 ]]; then
                 echo -e "  ${YELLOW}${ICON_WARNING}${NC} Knowledge database cleanup skipped (database busy or locked)"
                 optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+            elif [[ $remove_failed -gt 0 ]]; then
+                echo -e "  ${YELLOW}${ICON_WARNING}${NC} Knowledge database cleanup incomplete"
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+            else
+                opt_msg "Knowledge database cleaned (was $(bytes_to_human $((total_size * 1024))))"
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
             fi
         else
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} sqlite3 not available"
-            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
+            if [[ $remove_failed -gt 0 ]]; then
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+            else
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
+            fi
         fi
     else
         opt_msg "Knowledge database cleaned (was $(bytes_to_human $((total_size * 1024))))"
