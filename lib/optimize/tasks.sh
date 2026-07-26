@@ -1078,25 +1078,40 @@ opt_legacy_overrides_audit() {
 
     if [[ ${#found_keys[@]} -eq 0 ]]; then
         opt_msg "No legacy App Nap or disk-image overrides found"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
-    local idx
+    local changed=0 skipped=0 failed=0 idx
     for idx in "${!found_keys[@]}"; do
         if command -v is_path_whitelisted > /dev/null 2>&1 && is_path_whitelisted "${found_plists[$idx]}"; then
             opt_msg "Skipped (whitelisted): ${found_labels[$idx]}"
+            skipped=$((skipped + 1))
             continue
         fi
         if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
             echo -e "  ${YELLOW}${ICON_DRY_RUN}${NC} Would remove override: ${found_labels[$idx]}"
+            changed=$((changed + 1))
             continue
         fi
         if defaults delete "${found_domains[$idx]}" "${found_keys[$idx]}" 2> /dev/null; then
             opt_msg "Removed override: ${found_labels[$idx]}"
+            changed=$((changed + 1))
         else
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Could not remove override: ${found_labels[$idx]}"
+            failed=$((failed + 1))
         fi
     done
+
+    if [[ $changed -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    elif [[ $failed -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+    elif [[ $skipped -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
+    else
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+    fi
 }
 
 # True unless the path lives on an unmounted /Volumes/<disk>. A LaunchAgent
@@ -1120,6 +1135,7 @@ opt_launch_agents_cleanup() {
 
     if [[ ! -d "$agents_dir" ]]; then
         opt_msg "Launch Agents all healthy"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -1148,6 +1164,7 @@ opt_launch_agents_cleanup() {
 
     if [[ $broken_count -eq 0 ]]; then
         opt_msg "Launch Agents all healthy"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -1157,6 +1174,7 @@ opt_launch_agents_cleanup() {
     done
 
     opt_msg "Cleaned $broken_count broken Launch Agent(s)"
+    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
 }
 
 # macOS periodic maintenance scripts (daily/weekly/monthly).
@@ -1217,6 +1235,7 @@ opt_shared_file_list_repair() {
     local sfl_dir="$HOME/Library/Application Support/com.apple.sharedfilelist"
     if [[ ! -d "$sfl_dir" ]]; then
         opt_msg "Shared file lists directory not found"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -1235,8 +1254,10 @@ opt_shared_file_list_repair() {
 
     if [[ $repaired -gt 0 ]]; then
         opt_msg "Repaired $repaired corrupted shared file list(s)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     else
         opt_msg "Shared file lists all healthy"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     fi
 }
 
@@ -1293,11 +1314,13 @@ opt_notification_cleanup() {
 opt_disk_verify() {
     if [[ "${MOLE_ENABLE_DISK_VERIFY:-0}" != "1" ]]; then
         opt_msg "Disk verify skipped (set MOLE_ENABLE_DISK_VERIFY=1 to enable)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
         return 0
     fi
 
     if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
         opt_msg "Disk verify · skipped in dry-run"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
         return 0
     fi
 
@@ -1312,10 +1335,13 @@ opt_disk_verify() {
 
     if echo "$output" | grep -qi "appears to be OK\|volume appears to be ok"; then
         opt_msg "Disk filesystem verified OK"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     elif echo "$output" | grep -qi "error\|corrupt\|invalid"; then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Disk issues detected · run: sudo diskutil repairVolume /"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_ATTENTION"
     else
         opt_msg "Disk verify complete"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     fi
 }
 
@@ -1552,6 +1578,7 @@ _login_item_app_exists() {
 opt_login_items_audit() {
     if [[ "${MOLE_TEST_NO_AUTH:-0}" == "1" ]]; then
         opt_msg "Login items audit · skipped in test mode"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
         return 0
     fi
 
@@ -1560,6 +1587,7 @@ opt_login_items_audit() {
 
     if [[ -z "$items_output" ]]; then
         opt_msg "No login items found"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -1578,8 +1606,10 @@ opt_login_items_audit() {
 
     if [[ $broken -eq 0 ]]; then
         opt_msg "Login items all healthy ($checked checked)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     else
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} $broken broken login item(s) · remove via System Settings > General > Login Items"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_ATTENTION"
     fi
 }
 
