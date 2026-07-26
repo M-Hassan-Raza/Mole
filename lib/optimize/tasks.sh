@@ -1364,21 +1364,31 @@ opt_disk_verify() {
     if [[ -t 1 ]]; then
         MOLE_SPINNER_PREFIX="  " start_inline_spinner "Verifying disk filesystem..."
     fi
-    local output
-    output=$(run_with_timeout "$MOLE_TIMEOUT_DISK_VERIFY_SEC" diskutil verifyVolume / 2>&1 || true)
+    local output=""
+    local verify_status=0
+    set +e
+    output=$(run_with_timeout "$MOLE_TIMEOUT_DISK_VERIFY_SEC" diskutil verifyVolume / 2>&1)
+    verify_status=$?
+    set -e
     if [[ -t 1 ]]; then
         stop_inline_spinner
     fi
 
-    if echo "$output" | grep -qi "appears to be OK\|volume appears to be ok"; then
+    if [[ $verify_status -eq 124 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Disk verification timed out"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+    elif [[ $verify_status -ne 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Disk verification failed (exit=$verify_status)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+    elif echo "$output" | grep -qi "appears to be OK\|volume appears to be ok"; then
         opt_msg "Disk filesystem verified OK"
         optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     elif echo "$output" | grep -qi "error\|corrupt\|invalid"; then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Disk issues detected · run: sudo diskutil repairVolume /"
         optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_ATTENTION"
     else
-        opt_msg "Disk verify complete"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Disk verification result was not recognized"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
     fi
 }
 

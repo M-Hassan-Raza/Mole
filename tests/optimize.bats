@@ -1098,6 +1098,22 @@ EOF
 	[[ "$output" == *"Failed to run periodic maintenance (exit=7)"* ]] || return 1
 }
 
+@test "opt_disk_verify reports a timed out probe as failed" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_ENABLE_DISK_VERIFY=1 /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+run_with_timeout() { return 124; }
+
+execute_optimization disk_verify
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count unchanged)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Disk verification timed out"* ]] || return 1
+}
+
 @test "run_optimize_diagnostics flags sustained CloudShell as primary bottleneck" {
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" \
 		MOLE_OPTIMIZE_PS_SAMPLE_1=$'120 /Applications/AliEntSafe.app/Contents/Services/CloudShell.app/Contents/MacOS/CloudShell --type=event-capture\n35 /usr/libexec/syspolicyd\n20 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer' \
