@@ -1025,6 +1025,7 @@ opt_prevent_network_dsstore() {
     local -a keys=("DSDontWriteNetworkStores" "DSDontWriteUSBStores")
     local changed=0
     local already=0
+    local failed=0
 
     for key in "${keys[@]}"; do
         local current
@@ -1041,22 +1042,24 @@ opt_prevent_network_dsstore() {
 
         if defaults write "$domain" "$key" -bool true 2> /dev/null; then
             changed=$((changed + 1))
+        else
+            failed=$((failed + 1))
         fi
     done
 
     if [[ $changed -eq 0 && $already -gt 0 ]]; then
         opt_msg ".DS_Store prevention already enabled on network & USB volumes"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
-        return 0
     fi
 
     if [[ $changed -gt 0 ]]; then
         opt_msg ".DS_Store prevention enabled on network & USB volumes"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-    else
+    elif [[ $failed -gt 0 ]]; then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to enable .DS_Store prevention"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
     fi
+    if [[ $changed -gt 0 && $failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to enable .DS_Store prevention for $failed volume type(s)"
+    fi
+    optimize_task_result_from_counts "$changed" "$failed"
 }
 
 # Legacy override audit (#1242, #1243): old tweak utilities leave behind

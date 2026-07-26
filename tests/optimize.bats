@@ -476,6 +476,29 @@ EOF
 	[[ "$output" == *"already enabled"* ]]
 }
 
+@test "opt_prevent_network_dsstore reports a partial write failure" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+defaults() {
+    if [[ "$1" == "read" ]]; then
+        return 1
+    fi
+    [[ "$3" == "DSDontWriteNetworkStores" ]]
+}
+export -f defaults
+
+execute_optimization prevent_network_dsstore
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count applied)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *".DS_Store prevention enabled"* ]] || return 1
+	[[ "$output" == *"Failed to enable .DS_Store prevention for 1 volume type(s)"* ]] || return 1
+}
+
 @test "opt_legacy_overrides_audit stays silent-positive when defaults are in effect" {
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
