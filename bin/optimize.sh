@@ -288,13 +288,6 @@ main() {
     for ((index = 0; index < ${#MOLE_OPTIMIZE_ACTIONS[@]}; index++)); do
         action=${MOLE_OPTIMIZE_ACTIONS[$index]}
         health_name=${MOLE_OPTIMIZE_HEALTH_NAMES[$index]}
-        if command -v is_whitelisted > /dev/null && is_whitelisted "$action"; then
-            optimize_task_start
-            opt_msg "Skipped (whitelisted): $health_name"
-            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
-            optimize_task_finish "$action"
-            continue
-        fi
         announce_action "$health_name"
         execute_optimization "$action"
     done

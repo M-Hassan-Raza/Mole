@@ -1305,7 +1305,7 @@ execute_optimization dock_refresh
 EOF
 
 	[ "$status" -eq 0 ]
-	[[ "$output" == *"Skipped (whitelisted): dock_refresh"* ]] || return 1
+	[[ "$output" == *"Skipped (whitelisted): Dock Refresh"* ]] || return 1
 	[[ "$output" != *"UNEXPECTED_DOCK"* ]]
 }
 

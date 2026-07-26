@@ -330,6 +330,7 @@ opt_fix_broken_configs() {
     local broken_prefs=""
     local prefs_partial=0
     broken_prefs=$(fix_broken_preferences) || prefs_partial=1
+    broken_prefs=${broken_prefs:-0}
 
     if [[ "$spinner_started" == "true" ]]; then
         stop_inline_spinner
@@ -1637,11 +1638,12 @@ opt_login_items_audit() {
 execute_optimization() {
     local action="$1"
 
-    local handler
+    local handler health_name
     if ! handler=$(optimize_catalog_handler_for "$action"); then
         echo -e "${YELLOW}${ICON_ERROR}${NC} Unknown action: $action"
         return 1
     fi
+    health_name=$(optimize_catalog_health_name_for "$action")
     if ! declare -F "$handler" > /dev/null; then
         echo -e "${YELLOW}${ICON_ERROR}${NC} Missing optimization handler: $handler"
         return 1
@@ -1649,7 +1651,7 @@ execute_optimization() {
 
     if command -v is_whitelisted > /dev/null && is_whitelisted "$action"; then
         optimize_task_start
-        opt_msg "Skipped (whitelisted): $action"
+        opt_msg "Skipped (whitelisted): $health_name"
         optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
         optimize_task_finish "$action"
         return 0
