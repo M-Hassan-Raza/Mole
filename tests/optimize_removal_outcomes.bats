@@ -132,3 +132,31 @@ EOF
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 	[[ "$output" == *"Knowledge database cleanup incomplete"* ]] || return 1
 }
+
+@test "CoreDuet cleanup preserves sidecars when sqlite3 is unavailable" {
+	run env HOME="$TEST_HOME/coreduet-unavailable" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+knowledge_dir="$HOME/Library/Application Support/Knowledge"
+wal_file="$knowledge_dir/knowledgeC.db-wal"
+mkdir -p "$knowledge_dir"
+touch "$knowledge_dir/knowledgeC.db" "$wal_file"
+run_with_timeout() { echo "112640 total"; }
+awk() { echo "112640"; }
+safe_remove() {
+    echo "UNEXPECTED_REMOVE:$1"
+    return 0
+}
+PATH="/nonexistent"
+
+execute_optimization coreduet_cleanup
+[[ "$(optimize_outcome_count unavailable)" == "1" ]] || exit 1
+[[ -f "$wal_file" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"sqlite3 not available"* ]] || return 1
+	[[ "$output" != *"UNEXPECTED_REMOVE"* ]] || return 1
+}
