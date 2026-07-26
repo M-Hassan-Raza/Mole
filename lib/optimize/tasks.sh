@@ -655,13 +655,13 @@ opt_memory_pressure_relief() {
         debug_risk_level "LOW" "Safe system command, does not affect active processes"
     fi
 
-    if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
-        if ! is_memory_pressure_high; then
-            opt_msg "Memory pressure already optimal"
-            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
-            return 0
-        fi
+    if ! is_memory_pressure_high; then
+        opt_msg "Memory pressure already optimal"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+        return 0
+    fi
 
+    if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
         if ! optimize_sudo_available; then
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Memory pressure relief · skipped (admin access required)"
             optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
@@ -709,23 +709,23 @@ opt_network_stack_optimize() {
         return 0
     fi
 
+    local route_ok=true
+    local dns_ok=true
+
+    if ! route -n get default > /dev/null 2>&1; then
+        route_ok=false
+    fi
+    if ! dscacheutil -q host -a name "example.com" > /dev/null 2>&1; then
+        dns_ok=false
+    fi
+
+    if [[ "$route_ok" == "true" && "$dns_ok" == "true" ]]; then
+        opt_msg "Network stack already optimal"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+        return 0
+    fi
+
     if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
-        local route_ok=true
-        local dns_ok=true
-
-        if ! route -n get default > /dev/null 2>&1; then
-            route_ok=false
-        fi
-        if ! dscacheutil -q host -a name "example.com" > /dev/null 2>&1; then
-            dns_ok=false
-        fi
-
-        if [[ "$route_ok" == "true" && "$dns_ok" == "true" ]]; then
-            opt_msg "Network stack already optimal"
-            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
-            return 0
-        fi
-
         if ! optimize_sudo_available; then
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Network stack refresh · skipped (admin access required)"
             optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
@@ -777,13 +777,13 @@ opt_disk_permissions_repair() {
     local user_id
     user_id=$(id -u)
 
-    if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
-        if ! needs_permissions_repair; then
-            opt_msg "User directory permissions already optimal"
-            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
-            return 0
-        fi
+    if ! needs_permissions_repair; then
+        opt_msg "User directory permissions already optimal"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+        return 0
+    fi
 
+    if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
         if ! optimize_sudo_available; then
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Disk permissions repair · skipped (admin access required)"
             optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"

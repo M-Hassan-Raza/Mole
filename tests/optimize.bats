@@ -90,6 +90,31 @@ EOF
 	[[ "$output" == *"high"* ]]
 }
 
+@test "dry-run keeps healthy conditional system tasks unchanged" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_DRY_RUN=1 /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+is_memory_pressure_high() { return 1; }
+route() { return 0; }
+dscacheutil() { return 0; }
+needs_permissions_repair() { return 1; }
+
+opt_memory_pressure_relief
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
+opt_network_stack_optimize
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
+opt_disk_permissions_repair
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Memory pressure already optimal"* ]] || return 1
+	[[ "$output" == *"Network stack already optimal"* ]] || return 1
+	[[ "$output" == *"User directory permissions already optimal"* ]] || return 1
+}
+
 @test "opt_system_maintenance reports DNS and Spotlight" {
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_DRY_RUN=1 /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
