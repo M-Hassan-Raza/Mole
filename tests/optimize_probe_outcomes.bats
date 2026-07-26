@@ -171,7 +171,19 @@ run_with_timeout() {
     return 7
 }
 is_ac_power() { return 0; }
-get_epoch_seconds() { echo 100; }
+time_file="$HOME/probe-time"
+echo 0 > "$time_file"
+get_epoch_seconds() {
+    local call
+    call=$(cat "$time_file")
+    call=$((call + 1))
+    echo "$call" > "$time_file"
+    if ((call % 2 == 1)); then
+        echo 100
+    else
+        echo 110
+    fi
+}
 sleep() { return 0; }
 
 execute_optimization spotlight_index_optimize

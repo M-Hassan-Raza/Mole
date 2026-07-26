@@ -954,10 +954,12 @@ opt_spotlight_index_optimize() {
             set -e
             test_end=$(get_epoch_seconds)
             test_duration=$((test_end - test_start))
-            if [[ $probe_status -eq 124 || $test_duration -gt $slow_threshold ]]; then
+            if [[ $probe_status -eq 124 ]]; then
                 slow_count=$((slow_count + 1))
             elif [[ $probe_status -ne 0 ]]; then
                 probe_failed=$((probe_failed + 1))
+            elif [[ $test_duration -gt $slow_threshold ]]; then
+                slow_count=$((slow_count + 1))
             fi
             if [[ "$probe" == "1" ]]; then
                 sleep 1
