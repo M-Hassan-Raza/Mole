@@ -176,8 +176,10 @@ flush_dns_cache() {
 
 # Basic system maintenance.
 opt_system_maintenance() {
+    local dns_flushed="false"
     if flush_dns_cache; then
         opt_msg "DNS cache flushed"
+        dns_flushed="true"
     fi
 
     local spotlight_status
@@ -186,6 +188,12 @@ opt_system_maintenance() {
         echo -e "  ${GRAY}${ICON_EMPTY}${NC} Spotlight indexing disabled"
     else
         opt_msg "Spotlight index verified"
+    fi
+
+    if [[ "$dns_flushed" == "true" ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    else
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
     fi
 }
 
@@ -333,14 +341,17 @@ opt_network_optimization() {
     if [[ "${MOLE_DNS_FLUSHED:-0}" == "1" ]]; then
         opt_msg "DNS cache already refreshed"
         opt_msg "mDNSResponder already restarted"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
     if flush_dns_cache; then
         opt_msg "DNS cache refreshed"
         opt_msg "mDNSResponder restarted"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     else
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to refresh DNS cache"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
     fi
 }
 
@@ -582,14 +593,17 @@ opt_launch_services_rebuild() {
         if [[ $success -eq 0 ]]; then
             opt_msg "LaunchServices repaired"
             opt_msg "File associations refreshed"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
         else
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to rebuild LaunchServices"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
         fi
     else
         if [[ -t 1 ]]; then
             stop_inline_spinner
         fi
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} lsregister not found"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
     fi
 }
 
@@ -611,11 +625,13 @@ opt_memory_pressure_relief() {
     if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
         if ! is_memory_pressure_high; then
             opt_msg "Memory pressure already optimal"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
             return 0
         fi
 
         if ! optimize_sudo_available; then
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Memory pressure relief · skipped (admin access required)"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
             return 0
         fi
 
@@ -637,12 +653,15 @@ opt_memory_pressure_relief() {
         if [[ "$purge_ok" == "true" ]]; then
             opt_msg "Inactive memory released"
             opt_msg "System responsiveness improved"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
         else
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to release memory pressure"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
         fi
     else
         opt_msg "Inactive memory released"
         opt_msg "System responsiveness improved"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     fi
 }
 
@@ -653,6 +672,7 @@ opt_network_stack_optimize() {
 
     if has_active_vpn_interface; then
         opt_msg "Network stack refresh skipped, active VPN detected"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
         return 0
     fi
 
@@ -669,11 +689,13 @@ opt_network_stack_optimize() {
 
         if [[ "$route_ok" == "true" && "$dns_ok" == "true" ]]; then
             opt_msg "Network stack already optimal"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
             return 0
         fi
 
         if ! optimize_sudo_available; then
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Network stack refresh · skipped (admin access required)"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
             return 0
         fi
 
@@ -696,9 +718,16 @@ opt_network_stack_optimize() {
         opt_msg "ARP cache cleared"
     else
         if [[ "$route_flushed" == "true" ]]; then
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
             return 0
         fi
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to optimize network stack"
+    fi
+
+    if [[ "$route_flushed" == "true" || "$arp_flushed" == "true" ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    else
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
     fi
 }
 
@@ -718,11 +747,13 @@ opt_disk_permissions_repair() {
     if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
         if ! needs_permissions_repair; then
             opt_msg "User directory permissions already optimal"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
             return 0
         fi
 
         if ! optimize_sudo_available; then
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Disk permissions repair · skipped (admin access required)"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
             return 0
         fi
 
@@ -742,12 +773,15 @@ opt_disk_permissions_repair() {
         if [[ "$success" == "true" ]]; then
             opt_msg "User directory permissions repaired"
             opt_msg "File access issues resolved"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
         else
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to repair permissions, may not be needed"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
         fi
     else
         opt_msg "User directory permissions repaired"
         opt_msg "File access issues resolved"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     fi
 }
 
@@ -758,6 +792,7 @@ opt_spotlight_index_optimize() {
 
     if echo "$spotlight_status" | grep -qi "Indexing disabled"; then
         echo -e "  ${GRAY}${ICON_EMPTY}${NC} Spotlight indexing is disabled"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
         return 0
     fi
 
@@ -766,6 +801,7 @@ opt_spotlight_index_optimize() {
         # battery instead of measuring a result that would be discarded.
         if ! is_ac_power; then
             opt_msg "Spotlight index already optimal"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
             return 0
         fi
 
@@ -805,23 +841,29 @@ opt_spotlight_index_optimize() {
             if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
                 if ! optimize_sudo_available; then
                     echo -e "  ${YELLOW}${ICON_WARNING}${NC} Spotlight index rebuild · skipped (admin access required)"
+                    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
                     return 0
                 fi
                 echo -e "  ${BLUE}${ICON_INFO}${NC} Spotlight search is slow, rebuilding index, may take 1-2 hours"
                 if sudo mdutil -E / > /dev/null 2>&1; then
                     opt_msg "Spotlight index rebuild started"
                     echo -e "  ${GRAY}Indexing will continue in background${NC}"
+                    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
                 else
                     echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to rebuild Spotlight index"
+                    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
                 fi
             else
                 opt_msg "Spotlight index rebuild started"
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
             fi
         else
             opt_msg "Spotlight index already optimal"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         fi
     else
         opt_msg "Spotlight index verified"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     fi
 }
 
