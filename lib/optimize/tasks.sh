@@ -771,24 +771,25 @@ opt_network_stack_optimize() {
         arp_flushed="true"
     fi
 
+    local applied=0
+    local failed=0
     if [[ "$route_flushed" == "true" ]]; then
         opt_msg "Network routing table refreshed"
+        applied=$((applied + 1))
+    else
+        failed=$((failed + 1))
     fi
     if [[ "$arp_flushed" == "true" ]]; then
         opt_msg "ARP cache cleared"
+        applied=$((applied + 1))
     else
-        if [[ "$route_flushed" == "true" ]]; then
-            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-            return 0
-        fi
-        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to optimize network stack"
+        failed=$((failed + 1))
     fi
 
-    if [[ "$route_flushed" == "true" || "$arp_flushed" == "true" ]]; then
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-    else
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+    if [[ $failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Network stack refresh incomplete ($failed operation(s) failed)"
     fi
+    optimize_task_result_from_counts "$applied" "$failed"
 }
 
 # User directory permissions repair.

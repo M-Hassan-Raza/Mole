@@ -1114,6 +1114,32 @@ EOF
 	[[ "$output" == *"Disk verification timed out"* ]] || return 1
 }
 
+@test "opt_network_stack_optimize reports a partial flush failure" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_ASSUME_VPN_ACTIVE=0 /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+route() { return 1; }
+dscacheutil() { return 1; }
+optimize_sudo_available() { return 0; }
+sudo() {
+    if [[ "$1" == "route" ]]; then
+        return 0
+    fi
+    return 7
+}
+export -f route dscacheutil optimize_sudo_available sudo
+
+execute_optimization network_stack_optimize
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count applied)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Network routing table refreshed"* ]] || return 1
+	[[ "$output" == *"Network stack refresh incomplete (1 operation(s) failed)"* ]] || return 1
+}
+
 @test "run_optimize_diagnostics flags sustained CloudShell as primary bottleneck" {
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" \
 		MOLE_OPTIMIZE_PS_SAMPLE_1=$'120 /Applications/AliEntSafe.app/Contents/Services/CloudShell.app/Contents/MacOS/CloudShell --type=event-capture\n35 /usr/libexec/syspolicyd\n20 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer' \
