@@ -182,19 +182,21 @@ opt_system_maintenance() {
         dns_flushed="true"
     fi
 
-    local spotlight_status
-    spotlight_status=$(mdutil -s / 2> /dev/null || echo "")
-    if echo "$spotlight_status" | grep -qi "Indexing disabled"; then
+    local spotlight_status=""
+    local spotlight_failed=0
+    if ! spotlight_status=$(mdutil -s / 2> /dev/null); then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to verify Spotlight index"
+        spotlight_failed=1
+    elif echo "$spotlight_status" | grep -qi "Indexing disabled"; then
         echo -e "  ${GRAY}${ICON_EMPTY}${NC} Spotlight indexing disabled"
     else
         opt_msg "Spotlight index verified"
     fi
 
-    if [[ "$dns_flushed" == "true" ]]; then
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
-    else
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
-    fi
+    local applied=0
+    local failed="$spotlight_failed"
+    [[ "$dns_flushed" == "true" ]] && applied=1 || failed=$((failed + 1))
+    optimize_task_result_from_counts "$applied" "$failed"
 }
 
 # Refresh Finder caches (QuickLook/icon services).
@@ -435,10 +437,19 @@ opt_quarantine_cleanup() {
     fi
 
     # Check if database has any entries worth cleaning.
-    local row_count
-    row_count=$(run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" sqlite3 "$quarantine_db" "SELECT COUNT(*) FROM LSQuarantineEvent;" 2> /dev/null || echo "0")
+    local row_count=""
+    local count_status=0
+    set +e
+    row_count=$(run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" sqlite3 "$quarantine_db" "SELECT COUNT(*) FROM LSQuarantineEvent;" 2> /dev/null)
+    count_status=$?
+    set -e
 
-    if [[ ! "$row_count" =~ ^[0-9]+$ ]] || [[ "$row_count" -eq 0 ]]; then
+    if [[ $count_status -ne 0 || ! "$row_count" =~ ^[0-9]+$ ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to inspect quarantine database"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+        return 0
+    fi
+    if [[ "$row_count" -eq 0 ]]; then
         opt_msg "Quarantine database already clean"
         optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
@@ -848,8 +859,18 @@ opt_disk_permissions_repair() {
 
 # Spotlight index check/rebuild (only if slow).
 opt_spotlight_index_optimize() {
-    local spotlight_status
-    spotlight_status=$(run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" mdutil -s / 2> /dev/null || echo "")
+    local spotlight_status=""
+    local spotlight_status_code=0
+    set +e
+    spotlight_status=$(run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" mdutil -s / 2> /dev/null)
+    spotlight_status_code=$?
+    set -e
+
+    if [[ $spotlight_status_code -ne 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to inspect Spotlight index (exit=$spotlight_status_code)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+        return 0
+    fi
 
     if echo "$spotlight_status" | grep -qi "Indexing disabled"; then
         echo -e "  ${GRAY}${ICON_EMPTY}${NC} Spotlight indexing is disabled"
@@ -1648,8 +1669,18 @@ opt_login_items_audit() {
         return 0
     fi
 
-    local items_output
-    items_output=$(_login_items_snapshot 2> /dev/null || true)
+    local items_output=""
+    local snapshot_status=0
+    set +e
+    items_output=$(_login_items_snapshot 2> /dev/null)
+    snapshot_status=$?
+    set -e
+
+    if [[ $snapshot_status -ne 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to inspect login items"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+        return 0
+    fi
 
     if [[ -z "$items_output" ]]; then
         opt_msg "No login items found"
