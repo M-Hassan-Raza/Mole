@@ -300,6 +300,7 @@ main() {
     show_optimization_summary
 
     printf '\n'
+    optimize_outcomes_succeeded
 }
 
 main "$@"

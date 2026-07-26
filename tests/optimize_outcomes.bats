@@ -57,6 +57,27 @@ EOF
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 }
 
+@test "optimize run success rejects failed tasks but allows attention" {
+	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/optimize/outcomes.sh"
+
+optimize_task_start
+optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_ATTENTION"
+optimize_task_finish login_items_audit
+optimize_outcomes_succeeded || exit 1
+
+optimize_task_start
+optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+optimize_task_finish periodic_maintenance
+if optimize_outcomes_succeeded; then
+    exit 1
+fi
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}
+
 @test "optimize outcomes reject invalid and duplicate task results" {
 	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail

@@ -156,3 +156,7 @@ optimize_outcome_count() {
 optimize_outcome_total() {
     printf '%s\n' "${#MOLE_OPTIMIZE_RESULT_ACTIONS[@]}"
 }
+
+optimize_outcomes_succeeded() {
+    [[ "$(optimize_outcome_count "$MOLE_OPTIMIZE_OUTCOME_FAILED")" -eq 0 ]]
+}
