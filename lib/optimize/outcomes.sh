@@ -36,15 +36,11 @@ MOLE_OPTIMIZE_TASK_ACTIVE=0
 MOLE_OPTIMIZE_TASK_OUTCOME=""
 
 _optimize_outcome_is_valid() {
-    case "$1" in
-        "$MOLE_OPTIMIZE_OUTCOME_APPLIED" | \
-            "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" | \
-            "$MOLE_OPTIMIZE_OUTCOME_SKIPPED" | \
-            "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE" | \
-            "$MOLE_OPTIMIZE_OUTCOME_ATTENTION" | \
-            "$MOLE_OPTIMIZE_OUTCOME_FAILED") return 0 ;;
-        *) return 1 ;;
-    esac
+    local candidate
+    for candidate in "${MOLE_OPTIMIZE_OUTCOME_VALUES[@]}"; do
+        [[ "$candidate" == "$1" ]] && return 0
+    done
+    return 1
 }
 
 optimize_outcomes_reset() {
