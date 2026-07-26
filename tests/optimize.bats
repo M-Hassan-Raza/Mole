@@ -421,6 +421,57 @@ EOF
 	[[ "$output" == *"Failed on 1 databases"* ]] || return 1
 }
 
+@test "opt_sqlite_vacuum reports a failed integrity probe" {
+	run env HOME="$HOME/sqlite-integrity" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+db="$HOME/Library/Messages/chat.db"
+mkdir -p "$(dirname "$db")"
+touch "$db"
+pgrep() { return 1; }
+file() { echo "SQLite 3.x database"; }
+get_file_size() { echo 1; }
+run_with_timeout() {
+    shift
+    if [[ "$3" == "PRAGMA page_count; PRAGMA freelist_count;" ]]; then
+        printf '100\n10\n'
+        return 0
+    fi
+    return 7
+}
+sqlite3() { return 0; }
+export -f pgrep file get_file_size run_with_timeout sqlite3
+
+execute_optimization sqlite_vacuum
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed on 1 databases"* ]] || return 1
+}
+
+@test "opt_sqlite_vacuum reports oversized databases as skipped" {
+	run env HOME="$HOME/sqlite-oversized" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+db="$HOME/Library/Messages/chat.db"
+mkdir -p "$(dirname "$db")"
+touch "$db"
+pgrep() { return 1; }
+file() { echo "SQLite 3.x database"; }
+get_file_size() { echo $((MOLE_SQLITE_MAX_SIZE + 1)); }
+export -f pgrep file get_file_size
+
+execute_optimization sqlite_vacuum
+[[ "$(optimize_outcome_count skipped)" == "1" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Skipped 1 oversized databases"* ]] || return 1
+}
+
 @test "optimize does not auto-fix Gatekeeper anymore" {
 	run grep -n "spctl --master-enable\\|SECURITY_FIXES+=([\"']gatekeeper|" "$PROJECT_ROOT/bin/optimize.sh"
 

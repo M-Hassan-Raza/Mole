@@ -530,7 +530,8 @@ opt_sqlite_vacuum() {
     local vacuumed=0
     local timed_out=0
     local failed=0
-    local skipped=0
+    local policy_skipped=0
+    local already_optimal=0
 
     for pattern in "${db_paths[@]}"; do
         while IFS= read -r db_file; do
@@ -548,13 +549,21 @@ opt_sqlite_vacuum() {
             local file_size
             file_size=$(get_file_size "$db_file")
             if [[ "$file_size" -gt "$MOLE_SQLITE_MAX_SIZE" ]]; then
-                skipped=$((skipped + 1))
+                policy_skipped=$((policy_skipped + 1))
                 continue
             fi
 
             # Skip if freelist is tiny (already compact).
             local page_info=""
-            page_info=$(run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" sqlite3 "$db_file" "PRAGMA page_count; PRAGMA freelist_count;" 2> /dev/null || echo "")
+            local page_status=0
+            set +e
+            page_info=$(run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" sqlite3 "$db_file" "PRAGMA page_count; PRAGMA freelist_count;" 2> /dev/null)
+            page_status=$?
+            set -e
+            if [[ $page_status -ne 0 ]]; then
+                failed=$((failed + 1))
+                continue
+            fi
             local page_count=""
             local freelist_count=""
             page_count="${page_info%%$'\n'*}"
@@ -564,7 +573,7 @@ opt_sqlite_vacuum() {
             fi
             if [[ "$page_count" =~ ^[0-9]+$ && "$freelist_count" =~ ^[0-9]+$ && "$page_count" -gt 0 ]]; then
                 if ((freelist_count * 100 < page_count * 5)); then
-                    skipped=$((skipped + 1))
+                    already_optimal=$((already_optimal + 1))
                     continue
                 fi
             fi
@@ -578,7 +587,7 @@ opt_sqlite_vacuum() {
                 set -e
 
                 if [[ $integrity_status -ne 0 || "$integrity_check" != "ok" ]]; then
-                    skipped=$((skipped + 1))
+                    failed=$((failed + 1))
                     continue
                 fi
             fi
@@ -616,8 +625,12 @@ opt_sqlite_vacuum() {
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Database optimization incomplete"
     fi
 
-    if [[ $skipped -gt 0 ]]; then
-        opt_msg "Already optimal for $skipped databases"
+    if [[ $already_optimal -gt 0 ]]; then
+        opt_msg "Already optimal for $already_optimal databases"
+    fi
+
+    if [[ $policy_skipped -gt 0 ]]; then
+        opt_msg "Skipped $policy_skipped oversized databases"
     fi
 
     if [[ $timed_out -gt 0 ]]; then
@@ -628,7 +641,7 @@ opt_sqlite_vacuum() {
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed on $failed databases"
     fi
 
-    optimize_task_result_from_counts "$vacuumed" "$((timed_out + failed))"
+    optimize_task_result_from_counts "$vacuumed" "$((timed_out + failed))" "$policy_skipped"
 }
 
 # LaunchServices rebuild ("Open with" issues).
