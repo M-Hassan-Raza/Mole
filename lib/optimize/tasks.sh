@@ -257,6 +257,7 @@ opt_cache_refresh() {
     export OPTIMIZE_CACHE_CLEANED_KB="${total_cache_size}"
     opt_msg "QuickLook thumbnails refreshed"
     opt_msg "Icon services cache rebuilt"
+    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
 }
 
 # Removed: opt_maintenance_scripts - macOS handles log rotation automatically via launchd
@@ -274,17 +275,25 @@ opt_saved_state_cleanup() {
     fi
 
     local state_dir="$HOME/Library/Saved Application State"
+    local removed=0
 
     if [[ -d "$state_dir" ]]; then
         while IFS= read -r -d '' state_path; do
             if should_protect_path "$state_path"; then
                 continue
             fi
-            safe_remove "$state_path" true > /dev/null 2>&1 || true
+            if safe_remove "$state_path" true > /dev/null 2>&1; then
+                removed=$((removed + 1))
+            fi
         done < <(command find "$state_dir" -type d -name "*.savedState" -mtime "+$MOLE_SAVED_STATE_AGE_DAYS" -print0 2> /dev/null)
     fi
 
     opt_msg "App saved states optimized"
+    if [[ $removed -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    else
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
+    fi
 }
 
 # Removed: opt_swap_cleanup - Direct virtual memory operations pose system crash risk
@@ -320,12 +329,19 @@ opt_fix_broken_configs() {
     fi
 
     export OPTIMIZE_CONFIGS_REPAIRED="${broken_prefs}"
-    if [[ $prefs_partial -ne 0 ]]; then
+    if [[ $broken_prefs -gt 0 ]]; then
+        if [[ $prefs_partial -ne 0 ]]; then
+            echo -e "  ${YELLOW}${ICON_WARNING}${NC} Preference scan hit its time budget, repaired ${broken_prefs:-0} so far"
+        else
+            opt_msg "Repaired $broken_prefs corrupted preference files"
+        fi
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    elif [[ $prefs_partial -ne 0 ]]; then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Preference scan hit its time budget, repaired ${broken_prefs:-0} so far"
-    elif [[ $broken_prefs -gt 0 ]]; then
-        opt_msg "Repaired $broken_prefs corrupted preference files"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
     else
         opt_msg "All preference files valid"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     fi
 }
 
@@ -878,6 +894,7 @@ opt_prune_spotlight_orphan_rules() {
 
     if ! defaults read "$domain" EnabledPreferenceRules &> /dev/null; then
         opt_msg "Spotlight search rules already clean"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -906,24 +923,33 @@ opt_prune_spotlight_orphan_rules() {
 
     if [[ ${#removed[@]} -eq 0 ]]; then
         opt_msg "Spotlight search rules already clean"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
     if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
         opt_msg "Would remove ${#removed[@]} orphan Spotlight rule(s)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
         return 0
     fi
 
     # Rewrite the filtered array through cfprefsd (defaults), not by deleting
     # plist indices in place: this avoids the cfprefsd cache overwriting a direct
     # file edit, and ensures System Settings reflects the change and it persists.
+    local write_status=0
     if [[ ${#keep[@]} -gt 0 ]]; then
-        defaults write "$domain" EnabledPreferenceRules -array "${keep[@]}" 2> /dev/null || true
+        defaults write "$domain" EnabledPreferenceRules -array "${keep[@]}" 2> /dev/null || write_status=$?
     else
-        defaults delete "$domain" EnabledPreferenceRules 2> /dev/null || true
+        defaults delete "$domain" EnabledPreferenceRules 2> /dev/null || write_status=$?
     fi
 
-    opt_msg "Removed ${#removed[@]} orphan Spotlight rule(s)"
+    if [[ $write_status -eq 0 ]]; then
+        opt_msg "Removed ${#removed[@]} orphan Spotlight rule(s)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    else
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to remove orphan Spotlight rules"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+    fi
 }
 
 # Dock refresh (restart Dock so plist edits take effect).
@@ -943,6 +969,7 @@ opt_dock_refresh() {
     fi
 
     opt_msg "Dock refreshed"
+    optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
 }
 
 # Prevent .DS_Store on network and USB volumes.
@@ -975,11 +1002,16 @@ opt_prevent_network_dsstore() {
 
     if [[ $changed -eq 0 && $already -gt 0 ]]; then
         opt_msg ".DS_Store prevention already enabled on network & USB volumes"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
     if [[ $changed -gt 0 ]]; then
         opt_msg ".DS_Store prevention enabled on network & USB volumes"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    else
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to enable .DS_Store prevention"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
     fi
 }
 
