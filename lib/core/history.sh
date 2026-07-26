@@ -169,6 +169,7 @@ history_record_operation() {
         TRASHED) HISTORY_ACTIVE_TRASHED=$((HISTORY_ACTIVE_TRASHED + 1)) ;;
         SKIPPED) HISTORY_ACTIVE_SKIPPED=$((HISTORY_ACTIVE_SKIPPED + 1)) ;;
         FAILED) HISTORY_ACTIVE_FAILED=$((HISTORY_ACTIVE_FAILED + 1)) ;;
+        TASK_FAILED) HISTORY_ACTIVE_FAILED_TASKS=$((HISTORY_ACTIVE_FAILED_TASKS + 1)) ;;
         REBUILT) HISTORY_ACTIVE_REBUILT=$((HISTORY_ACTIVE_REBUILT + 1)) ;;
         *) HISTORY_ACTIVE_OTHER=$((HISTORY_ACTIVE_OTHER + 1)) ;;
     esac
@@ -192,7 +193,7 @@ history_parse_session_start() {
 
 history_parse_session_end() {
     local line="$1"
-    local inner command rest ended_at tail items size failed_tail failed_tasks
+    local inner command rest ended_at tail items size
 
     case "$line" in
         "# ========== "*" session ended at "*" ==========") ;;
@@ -211,15 +212,6 @@ history_parse_session_end() {
         if [[ "$tail" == *" items, "* ]]; then
             items="${tail%% items,*}"
             size="${tail#*, }"
-            if [[ "$size" == *", "*" failed tasks" ]]; then
-                failed_tail="${size##*, }"
-                failed_tasks="${failed_tail% failed tasks}"
-                if [[ "$failed_tasks" =~ ^[0-9]+$ ]]; then
-                    size="${size%, *}"
-                else
-                    failed_tasks=""
-                fi
-            fi
         fi
     fi
 
@@ -230,7 +222,6 @@ history_parse_session_end() {
     HISTORY_ACTIVE_ENDED_AT="$ended_at"
     [[ "$items" =~ ^[0-9]+$ ]] && HISTORY_ACTIVE_ITEMS="$items"
     [[ -n "$size" ]] && HISTORY_ACTIVE_SIZE="$size"
-    [[ "$failed_tasks" =~ ^[0-9]+$ ]] && HISTORY_ACTIVE_FAILED_TASKS="$failed_tasks"
     history_finish_session
     return 0
 }

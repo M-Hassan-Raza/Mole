@@ -239,7 +239,6 @@ log_operation_session_start() {
         "# ========== $command session started at $timestamp =========="
 }
 
-# Usage: log_operation_session_end <command> <items> <size_kb> [failed_tasks]
 # shellcheck disable=SC2329
 log_operation_session_end() {
     oplog_enabled || return 0
@@ -247,14 +246,8 @@ log_operation_session_end() {
     local command="${1:-mole}"
     local items="${2:-0}"
     local size="${3:-0}"
-    local failed_tasks="${4:-}"
     local timestamp
     timestamp=$(get_timestamp)
-
-    if [[ -n "$failed_tasks" && ! "$failed_tasks" =~ ^[0-9]+$ ]]; then
-        echo "Invalid failed task count: $failed_tasks" >&2
-        return 1
-    fi
 
     local size_human=""
     if [[ "$size" =~ ^[0-9]+$ ]] && [[ "$size" -gt 0 ]]; then
@@ -263,14 +256,9 @@ log_operation_session_end() {
         size_human="0B"
     fi
 
-    local outcome_suffix=""
-    if [[ -n "$failed_tasks" ]]; then
-        outcome_suffix=", $failed_tasks failed tasks"
-    fi
-
     append_log_line \
         "$OPERATIONS_LOG_FILE" \
-        "# ========== $command session ended at $timestamp, $items items, $size_human$outcome_suffix =========="
+        "# ========== $command session ended at $timestamp, $items items, $size_human =========="
 }
 
 # Enhanced debug logging for operations

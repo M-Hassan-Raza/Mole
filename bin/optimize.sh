@@ -164,12 +164,16 @@ cleanup_all() {
     cleanup_temp_files
     # Log session end
     local applied=0
-    local failed=0
     if declare -F optimize_outcome_count > /dev/null; then
         applied=$(optimize_outcome_count "$MOLE_OPTIMIZE_OUTCOME_APPLIED")
-        failed=$(optimize_outcome_count "$MOLE_OPTIMIZE_OUTCOME_FAILED")
+        local index
+        for ((index = 0; index < ${#MOLE_OPTIMIZE_RESULT_ACTIONS[@]}; index++)); do
+            if [[ "${MOLE_OPTIMIZE_RESULT_OUTCOMES[$index]}" == "$MOLE_OPTIMIZE_OUTCOME_FAILED" ]]; then
+                log_operation "optimize" "TASK_FAILED" "${MOLE_OPTIMIZE_RESULT_ACTIONS[$index]}" "task outcome"
+            fi
+        done
     fi
-    log_operation_session_end "optimize" "$applied" "0" "$failed"
+    log_operation_session_end "optimize" "$applied" "0"
 }
 
 handle_interrupt() {
