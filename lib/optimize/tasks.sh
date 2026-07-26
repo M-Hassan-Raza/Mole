@@ -55,6 +55,14 @@ opt_existing_path_size_kb() {
     opt_numeric_kb "$(get_path_size_kb "$path" 2> /dev/null || echo "0")"
 }
 
+opt_existing_file_size_kb_strict() {
+    local path="$1"
+    local bytes=""
+    bytes=$($STAT_BSD -f%z "$path" 2> /dev/null) || return 1
+    [[ "$bytes" =~ ^[0-9]+$ ]] || return 1
+    echo "$(((bytes + 1023) / 1024))"
+}
+
 run_launchctl_unload() {
     local plist_file="$1"
     local need_sudo="${2:-false}"
@@ -1332,8 +1340,12 @@ opt_notification_cleanup() {
         return 0
     fi
 
-    local db_size
-    db_size=$(opt_existing_path_size_kb "$nc_db")
+    local db_size=""
+    if ! db_size=$(opt_existing_file_size_kb_strict "$nc_db"); then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to inspect Notification Center database size"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+        return 0
+    fi
 
     # Only clean if database exceeds 50MB (51200 KB)
     if [[ $db_size -lt 51200 ]]; then
@@ -1436,8 +1448,16 @@ opt_coreduet_cleanup() {
     done
 
     if [[ ${#knowledge_files[@]} -gt 0 ]]; then
-        total_size=$(run_with_timeout "$MOLE_TIMEOUT_DISK_VERIFY_SEC" du -skcP "${knowledge_files[@]}" 2> /dev/null | awk 'END {print $1 + 0}' || echo "0")
-        total_size=$(opt_numeric_kb "$total_size")
+        local size_status=0
+        set +e
+        total_size=$(run_with_timeout "$MOLE_TIMEOUT_DISK_VERIFY_SEC" du -skcP "${knowledge_files[@]}" 2> /dev/null | awk 'END {print $1 + 0}')
+        size_status=$?
+        set -e
+        if [[ $size_status -ne 0 || ! "$total_size" =~ ^[0-9]+$ ]]; then
+            echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to inspect Knowledge database size"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+            return 0
+        fi
     fi
 
     # Skip if combined size < 100MB (102400 KB)

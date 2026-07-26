@@ -80,3 +80,40 @@ EOF
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 	[[ "$output" == *"Failed to inspect login items"* ]] || return 1
 }
+
+@test "notification cleanup reports a failed size probe" {
+	run env HOME="$TEST_HOME/notification" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+getconf() { echo "$HOME/runtime"; }
+db="$HOME/runtime/com.apple.notificationcenter/db2/db"
+mkdir -p "$(dirname "$db")"
+touch "$db"
+opt_existing_file_size_kb_strict() { return 124; }
+
+execute_optimization notification_cleanup
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed to inspect Notification Center database size"* ]] || return 1
+}
+
+@test "CoreDuet cleanup reports a failed size probe" {
+	run env HOME="$TEST_HOME/coreduet-size" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+db="$HOME/Library/Application Support/Knowledge/knowledgeC.db"
+mkdir -p "$(dirname "$db")"
+touch "$db"
+run_with_timeout() { return 124; }
+
+execute_optimization coreduet_cleanup
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed to inspect Knowledge database size"* ]] || return 1
+}
