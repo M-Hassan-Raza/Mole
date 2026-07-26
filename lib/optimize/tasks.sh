@@ -383,6 +383,7 @@ opt_quarantine_cleanup() {
 
     if ! command -v sqlite3 > /dev/null 2>&1; then
         echo -e "  ${GRAY}-${NC} Quarantine cleanup skipped, sqlite3 unavailable"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
         return 0
     fi
 
@@ -390,11 +391,13 @@ opt_quarantine_cleanup() {
 
     if [[ ! -f "$quarantine_db" ]]; then
         opt_msg "Quarantine database already clean"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
     if should_protect_path "$quarantine_db"; then
         opt_msg "Quarantine database already clean"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -404,6 +407,7 @@ opt_quarantine_cleanup() {
 
     if [[ ! "$row_count" =~ ^[0-9]+$ ]] || [[ "$row_count" -eq 0 ]]; then
         opt_msg "Quarantine database already clean"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -416,11 +420,14 @@ opt_quarantine_cleanup() {
 
         if [[ $exit_code -eq 0 ]]; then
             opt_msg "Quarantine history cleared ($row_count entries)"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
         else
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to clean quarantine database"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
         fi
     else
         opt_msg "Quarantine history cleared ($row_count entries)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     fi
 }
 
@@ -436,6 +443,7 @@ opt_sqlite_vacuum() {
 
     if ! command -v sqlite3 > /dev/null 2>&1; then
         echo -e "  ${GRAY}-${NC} Database optimization already optimal, sqlite3 unavailable"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
         return 0
     fi
 
@@ -450,6 +458,7 @@ opt_sqlite_vacuum() {
 
     if [[ ${#busy_apps[@]} -gt 0 ]]; then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Close these apps before database optimization: ${busy_apps[*]}"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
         return 0
     fi
 
@@ -565,6 +574,14 @@ opt_sqlite_vacuum() {
 
     if [[ $failed -gt 0 ]]; then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed on $failed databases"
+    fi
+
+    if [[ $vacuumed -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
+    elif [[ $timed_out -gt 0 || $failed -gt 0 ]]; then
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+    else
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
     fi
 }
 
@@ -1231,6 +1248,7 @@ opt_notification_cleanup() {
 
     if [[ ! -f "$nc_db" ]]; then
         opt_msg "Notification Center database not found"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -1240,6 +1258,7 @@ opt_notification_cleanup() {
     # Only clean if database exceeds 50MB (51200 KB)
     if [[ $db_size -lt 51200 ]]; then
         opt_msg "Notification Center database is healthy ($(bytes_to_human $((db_size * 1024))))"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -1252,14 +1271,18 @@ opt_notification_cleanup() {
             if [[ $sql_ok -eq 0 ]]; then
                 killall NotificationCenter 2> /dev/null || true
                 opt_msg "Notification Center database cleaned (was $(bytes_to_human $((db_size * 1024))))"
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
             else
                 echo -e "  ${YELLOW}${ICON_WARNING}${NC} Notification Center cleanup skipped (database busy or locked)"
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
             fi
         else
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} sqlite3 not available"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
         fi
     else
         opt_msg "Notification Center database cleaned (was $(bytes_to_human $((db_size * 1024))))"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     fi
 }
 
@@ -1303,6 +1326,7 @@ opt_coreduet_cleanup() {
 
     if [[ ! -f "$knowledge_db" ]]; then
         opt_msg "Knowledge database not found"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -1324,6 +1348,7 @@ opt_coreduet_cleanup() {
     # Skip if combined size < 100MB (102400 KB)
     if [[ $total_size -lt 102400 ]]; then
         opt_msg "Knowledge database is healthy ($(bytes_to_human $((total_size * 1024))))"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
         return 0
     fi
 
@@ -1340,14 +1365,18 @@ opt_coreduet_cleanup() {
                 2> /dev/null || sql_ok=$?
             if [[ $sql_ok -eq 0 ]]; then
                 opt_msg "Knowledge database cleaned (was $(bytes_to_human $((total_size * 1024))))"
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
             else
                 echo -e "  ${YELLOW}${ICON_WARNING}${NC} Knowledge database cleanup skipped (database busy or locked)"
+                optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
             fi
         else
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} sqlite3 not available"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
         fi
     else
         opt_msg "Knowledge database cleaned (was $(bytes_to_human $((total_size * 1024))))"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     fi
 }
 
