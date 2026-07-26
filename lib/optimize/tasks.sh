@@ -11,6 +11,7 @@ readonly MOLE_OPTIMIZE_TASKS_LOADED=1
 _MOLE_OPTIMIZE_TASKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly _MOLE_OPTIMIZE_TASKS_DIR
 source "$_MOLE_OPTIMIZE_TASKS_DIR/catalog.sh"
+source "$_MOLE_OPTIMIZE_TASKS_DIR/outcomes.sh"
 
 # Config constants (override via env).
 readonly MOLE_TM_THIN_TIMEOUT=180
@@ -1074,6 +1075,7 @@ opt_periodic_maintenance() {
     # Check if periodic command exists (removed in macOS 26+)
     if ! command -v periodic > /dev/null 2>&1; then
         opt_msg "Periodic maintenance skipped (not available on this macOS version)"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE"
         return 0
     fi
 

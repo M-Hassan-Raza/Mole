@@ -1133,6 +1133,7 @@ command() {
 }
 export -f command
 opt_periodic_maintenance
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNAVAILABLE" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
