@@ -15,7 +15,7 @@ teardown_file() {
 }
 
 @test "optimize dry-run summary reports outcomes instead of catalog size" {
-	run env HOME="$TEST_HOME" MOLE_TEST_NO_AUTH=1 NO_COLOR=1 "$PROJECT_ROOT/mole" optimize --dry-run
+	run env HOME="$TEST_HOME" MOLE_TEST_NO_AUTH=1 MOLE_ASSUME_VPN_ACTIVE=0 NO_COLOR=1 "$PROJECT_ROOT/mole" optimize --dry-run
 
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 	[[ "$output" =~ Would\ apply\ [0-9]+\ optimizations ]] || { echo "$output"; return 1; }

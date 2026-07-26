@@ -1620,6 +1620,13 @@ set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 
+mock_bin="$HOME/network-healthy-bin"
+mkdir -p "$mock_bin"
+printf '#!/bin/bash\nexit 0\n' > "$mock_bin/route"
+printf '#!/bin/bash\necho "ip_address: 93.184.216.34"\n' > "$mock_bin/dscacheutil"
+chmod +x "$mock_bin/route" "$mock_bin/dscacheutil"
+PATH="$mock_bin:$PATH"
+
 route() {
     return 0
 }
@@ -1670,6 +1677,13 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+mock_bin="$HOME/network-failure-bin"
+mkdir -p "$mock_bin"
+printf '#!/bin/bash\nexit 1\n' > "$mock_bin/route"
+printf '#!/bin/bash\nexit 1\n' > "$mock_bin/dscacheutil"
+chmod +x "$mock_bin/route" "$mock_bin/dscacheutil"
+PATH="$mock_bin:$PATH"
 
 route() {
     if [[ "$2" == "get" ]]; then

@@ -124,6 +124,8 @@ is_memory_pressure_high() {
     return 1
 }
 
+# Return 0 when a VPN is active, 1 when probes completed without finding one,
+# and 2 when the VPN state could not be determined safely.
 has_active_vpn_interface() {
     case "${MOLE_ASSUME_VPN_ACTIVE:-}" in
         1 | true | TRUE | yes | YES)
@@ -147,19 +149,33 @@ has_active_vpn_interface() {
     # Split-tunnel third-party VPNs that do not own the default route will not
     # be detected; route flushing may briefly disrupt their explicit routes,
     # which the VPN client re-establishes on its next reconcile.
-    if command -v scutil > /dev/null 2>&1; then
-        if scutil --nc list 2> /dev/null | grep -Eq '^\* \(Connected\)'; then
-            return 0
-        fi
+    if ! command -v scutil > /dev/null 2>&1; then
+        return 2
+    fi
+    local scutil_output=""
+    local scutil_status=0
+    scutil_output=$(LC_ALL=C run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" scutil --nc list 2> /dev/null) || scutil_status=$?
+    if [[ $scutil_status -ne 0 ]]; then
+        return 2
+    fi
+    if echo "$scutil_output" | grep -Eq '^\* \(Connected\)'; then
+        return 0
     fi
 
-    if command -v route > /dev/null 2>&1; then
-        local default_iface
-        default_iface=$(route -n get default 2> /dev/null |
-            awk -F': ' '$1 ~ /^[[:space:]]*interface$/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}')
-        if [[ "$default_iface" =~ ^utun[0-9]+$ ]]; then
-            return 0
-        fi
+    if ! command -v route > /dev/null 2>&1; then
+        return 2
+    fi
+    local route_output=""
+    local route_status=0
+    route_output=$(LC_ALL=C run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" route -n get default 2> /dev/null) || route_status=$?
+    if [[ $route_status -ne 0 ]]; then
+        return 2
+    fi
+    local default_iface
+    default_iface=$(printf '%s\n' "$route_output" |
+        awk -F': ' '$1 ~ /^[[:space:]]*interface$/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit}')
+    if [[ "$default_iface" =~ ^utun[0-9]+$ ]]; then
+        return 0
     fi
 
     return 1
@@ -198,7 +214,7 @@ opt_system_maintenance() {
 
     local spotlight_status=""
     local spotlight_failed=0
-    if ! spotlight_status=$(mdutil -s / 2> /dev/null); then
+    if ! spotlight_status=$(run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" mdutil -s / 2> /dev/null); then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to verify Spotlight index"
         spotlight_failed=1
     elif echo "$spotlight_status" | grep -qi "Indexing disabled"; then
@@ -324,7 +340,8 @@ opt_saved_state_cleanup() {
 
     local state_dir="$HOME/Library/Saved Application State"
     local removed=0
-    local failed=0
+    local scan_failed=0
+    local remove_failed=0
 
     if [[ -d "$state_dir" ]]; then
         local scan_file=""
@@ -333,9 +350,9 @@ opt_saved_state_cleanup() {
             optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
             return 0
         fi
-        if ! command find "$state_dir" -type d -name "*.savedState" -mtime "+$MOLE_SAVED_STATE_AGE_DAYS" -print0 > "$scan_file" 2> /dev/null; then
+        if ! run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" find "$state_dir" -type d -name "*.savedState" -mtime "+$MOLE_SAVED_STATE_AGE_DAYS" -print0 > "$scan_file" 2> /dev/null; then
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to scan old saved states"
-            failed=$((failed + 1))
+            scan_failed=1
         fi
         while IFS= read -r -d '' state_path; do
             if should_protect_path "$state_path"; then
@@ -344,16 +361,20 @@ opt_saved_state_cleanup() {
             if safe_remove "$state_path" true > /dev/null 2>&1; then
                 removed=$((removed + 1))
             else
-                failed=$((failed + 1))
+                remove_failed=$((remove_failed + 1))
             fi
         done < "$scan_file"
     fi
 
-    opt_msg "App saved states optimized"
-    if [[ $failed -gt 0 ]]; then
-        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to remove $failed old saved state(s)"
+    if [[ $scan_failed -eq 0 && $remove_failed -eq 0 ]]; then
+        opt_msg "App saved states optimized"
+    elif [[ $removed -gt 0 ]]; then
+        opt_msg "Removed $removed old saved state(s)"
     fi
-    optimize_task_result_from_counts "$removed" "$failed"
+    if [[ $remove_failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to remove $remove_failed old saved state(s)"
+    fi
+    optimize_task_result_from_counts "$removed" "$((scan_failed + remove_failed))"
 }
 
 # Removed: opt_swap_cleanup - Direct virtual memory operations pose system crash risk
@@ -784,19 +805,57 @@ opt_network_stack_optimize() {
     local route_flushed="false"
     local arp_flushed="false"
 
+    local vpn_status=0
     if has_active_vpn_interface; then
-        opt_msg "Network stack refresh skipped, active VPN detected"
-        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
-        return 0
+        vpn_status=0
+    else
+        vpn_status=$?
     fi
+    case "$vpn_status" in
+        0)
+            opt_msg "Network stack refresh skipped, active VPN detected"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
+            return 0
+            ;;
+        1) ;;
+        *)
+            echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to inspect active VPN state"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+            return 0
+            ;;
+    esac
 
     local route_ok=true
     local dns_ok=true
+    local route_status=0
+    local dns_status=0
 
-    if ! route -n get default > /dev/null 2>&1; then
+    if run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" route -n get default > /dev/null 2>&1; then
+        route_status=0
+    else
+        route_status=$?
+    fi
+    if run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" dscacheutil -q host -a name "example.com" > /dev/null 2>&1; then
+        dns_status=0
+    else
+        dns_status=$?
+    fi
+
+    if [[ $route_status -eq 124 || $dns_status -eq 124 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Network health check timed out"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+        return 0
+    fi
+    if [[ $route_status -gt 1 || $dns_status -gt 1 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to inspect network health"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
+        return 0
+    fi
+
+    if [[ $route_status -ne 0 ]]; then
         route_ok=false
     fi
-    if ! dscacheutil -q host -a name "example.com" > /dev/null 2>&1; then
+    if [[ $dns_status -ne 0 ]]; then
         dns_ok=false
     fi
 
@@ -1368,16 +1427,17 @@ opt_shared_file_list_repair() {
     fi
 
     local repaired=0
-    local failed=0
+    local scan_failed=0
+    local remove_failed=0
     local scan_file=""
     if ! scan_file=$(mktemp_file "optimize-shared-file-lists"); then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to prepare shared file list scan"
         optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
         return 0
     fi
-    if ! command find "$sfl_dir" \( -name "*.sfl2" -o -name "*.sfl3" \) -type f ! -path "*ApplicationRecentDocuments*" -print0 > "$scan_file" 2> /dev/null; then
+    if ! run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" find "$sfl_dir" \( -name "*.sfl2" -o -name "*.sfl3" \) -type f ! -path "*ApplicationRecentDocuments*" -print0 > "$scan_file" 2> /dev/null; then
         echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to scan shared file lists"
-        failed=$((failed + 1))
+        scan_failed=1
     fi
     while IFS= read -r -d '' sfl_file; do
         [[ -f "$sfl_file" ]] || continue
@@ -1387,20 +1447,20 @@ opt_shared_file_list_repair() {
             if [[ "${MOLE_DRY_RUN:-0}" == "1" ]] || safe_remove "$sfl_file" true > /dev/null 2>&1; then
                 repaired=$((repaired + 1))
             else
-                failed=$((failed + 1))
+                remove_failed=$((remove_failed + 1))
             fi
         fi
     done < "$scan_file"
 
     if [[ $repaired -gt 0 ]]; then
         opt_msg "Repaired $repaired corrupted shared file list(s)"
-    elif [[ $failed -eq 0 ]]; then
+    elif [[ $scan_failed -eq 0 && $remove_failed -eq 0 ]]; then
         opt_msg "Shared file lists all healthy"
     fi
-    if [[ $failed -gt 0 ]]; then
-        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to repair $failed corrupted shared file list(s)"
+    if [[ $remove_failed -gt 0 ]]; then
+        echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to repair $remove_failed corrupted shared file list(s)"
     fi
-    optimize_task_result_from_counts "$repaired" "$failed"
+    optimize_task_result_from_counts "$repaired" "$((scan_failed + remove_failed))"
 }
 
 # Clean old delivered notifications from NotificationCenter database.

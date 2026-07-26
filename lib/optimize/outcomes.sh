@@ -157,6 +157,19 @@ optimize_outcome_total() {
     printf '%s\n' "${#MOLE_OPTIMIZE_RESULT_ACTIONS[@]}"
 }
 
+optimize_failed_actions() {
+    local index
+    if [[ ${#MOLE_OPTIMIZE_RESULT_ACTIONS[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    for ((index = 0; index < ${#MOLE_OPTIMIZE_RESULT_ACTIONS[@]}; index++)); do
+        if [[ "${MOLE_OPTIMIZE_RESULT_OUTCOMES[$index]}" == "$MOLE_OPTIMIZE_OUTCOME_FAILED" ]]; then
+            printf '%s\n' "${MOLE_OPTIMIZE_RESULT_ACTIONS[$index]}"
+        fi
+    done
+}
+
 optimize_outcomes_succeeded() {
     [[ "$(optimize_outcome_count "$MOLE_OPTIMIZE_OUTCOME_FAILED")" -eq 0 ]]
 }

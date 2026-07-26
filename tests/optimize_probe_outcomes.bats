@@ -21,7 +21,10 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 unset MOLE_TEST_NO_AUTH MOLE_TEST_MODE
 flush_dns_cache() { return 0; }
-mdutil() { return 7; }
+mkdir -p "$HOME/bin"
+printf '#!/bin/bash\nexit 7\n' > "$HOME/bin/mdutil"
+chmod +x "$HOME/bin/mdutil"
+PATH="$HOME/bin:$PATH"
 
 execute_optimization system_maintenance
 [[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
@@ -210,6 +213,8 @@ EOF
 
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 	[[ "$output" == *"Failed to scan old saved states"* ]] || return 1
+	[[ "$output" != *"App saved states optimized"* ]] || return 1
+	[[ "$output" != *"Failed to remove"* ]] || return 1
 }
 
 @test "shared file list repair reports a failed discovery scan" {
@@ -228,4 +233,69 @@ EOF
 
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 	[[ "$output" == *"Failed to scan shared file lists"* ]] || return 1
+	[[ "$output" != *"Failed to repair"* ]] || return 1
+}
+
+@test "optimize external probes use bounded execution" {
+	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+tasks_file="$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+system_body=$(sed -n '/^opt_system_maintenance() {/,/^}/p' "$tasks_file")
+saved_body=$(sed -n '/^opt_saved_state_cleanup() {/,/^}/p' "$tasks_file")
+network_body=$(sed -n '/^opt_network_stack_optimize() {/,/^}/p' "$tasks_file")
+vpn_body=$(sed -n '/^has_active_vpn_interface() {/,/^}/p' "$tasks_file")
+shared_body=$(sed -n '/^opt_shared_file_list_repair() {/,/^}/p' "$tasks_file")
+
+[[ "$system_body" == *'run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" mdutil -s /'* ]] || exit 1
+[[ "$saved_body" == *'run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" find'* ]] || exit 1
+[[ "$network_body" == *'run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" route -n get default'* ]] || exit 1
+[[ "$network_body" == *'run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" dscacheutil -q host'* ]] || exit 1
+[[ "$vpn_body" == *'run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" scutil --nc list'* ]] || exit 1
+[[ "$vpn_body" == *'run_with_timeout "$MOLE_TIMEOUT_SHORT_QUERY_SEC" route -n get default'* ]] || exit 1
+[[ "$shared_body" == *'run_with_timeout "$MOLE_TIMEOUT_MEDIUM_PROBE_SEC" find'* ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}
+
+@test "network probe timeout never authorizes maintenance" {
+	run env HOME="$TEST_HOME/network-timeout" PROJECT_ROOT="$PROJECT_ROOT" MOLE_ASSUME_VPN_ACTIVE=0 MOLE_DRY_RUN=1 /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+run_with_timeout() { return 124; }
+sudo() { echo "UNEXPECTED_SUDO"; return 0; }
+
+execute_optimization network_stack_optimize
+[[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
+[[ "$(optimize_outcome_count applied)" == "0" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Network health check timed out"* ]] || return 1
+	[[ "$output" != *"Network routing table refreshed"* ]] || return 1
+	[[ "$output" != *"UNEXPECTED_SUDO"* ]] || return 1
+}
+
+@test "network probes preserve the caller errexit mode" {
+	run env HOME="$TEST_HOME/vpn-errexit" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+
+run_with_timeout() { return 124; }
+sudo() { echo "UNEXPECTED_SUDO"; return 0; }
+set +e
+execute_optimization network_stack_optimize
+false
+echo "survived:$(optimize_outcome_count failed)"
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed to inspect active VPN state"* ]] || return 1
+	[[ "$output" == *"survived:1"* ]] || return 1
+	[[ "$output" != *"Network routing table refreshed"* ]] || return 1
+	[[ "$output" != *"UNEXPECTED_SUDO"* ]] || return 1
 }

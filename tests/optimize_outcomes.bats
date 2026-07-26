@@ -141,3 +141,27 @@ EOF
 	[[ "$output" == *"Optimize task did not report an outcome: periodic_maintenance"* ]] || return 1
 	[[ "$output" == *"Optimize task outcome is already recorded: periodic_maintenance"* ]] || return 1
 }
+
+@test "optimize outcomes expose failed actions without leaking ledger storage" {
+	run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/optimize/outcomes.sh"
+
+for record in "cache_refresh:applied" "disk_verify:failed" "login_items_audit:attention" "periodic_maintenance:failed"; do
+    action=${record%%:*}
+    outcome=${record#*:}
+    optimize_task_start
+    optimize_task_result "$outcome"
+    optimize_task_finish "$action"
+done
+
+expected=$(printf 'disk_verify\nperiodic_maintenance\n')
+[[ "$(optimize_failed_actions)" == "$expected" ]] || exit 1
+if grep -q 'MOLE_OPTIMIZE_RESULT_' "$PROJECT_ROOT/bin/optimize.sh"; then
+    echo "optimize command reads private outcome storage"
+    exit 1
+fi
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}

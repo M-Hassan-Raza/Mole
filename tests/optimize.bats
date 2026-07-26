@@ -91,14 +91,17 @@ EOF
 }
 
 @test "dry-run keeps healthy conditional system tasks unchanged" {
-	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_DRY_RUN=1 /bin/bash --noprofile --norc <<'EOF'
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_DRY_RUN=1 MOLE_ASSUME_VPN_ACTIVE=0 /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 
 is_memory_pressure_high() { return 1; }
-route() { return 0; }
-dscacheutil() { return 0; }
+mkdir -p "$HOME/bin"
+printf '#!/bin/bash\nexit 0\n' > "$HOME/bin/route"
+printf '#!/bin/bash\nexit 0\n' > "$HOME/bin/dscacheutil"
+chmod +x "$HOME/bin/route" "$HOME/bin/dscacheutil"
+PATH="$HOME/bin:$PATH"
 needs_permissions_repair() { return 1; }
 
 execute_optimization memory_pressure_relief
@@ -119,7 +122,10 @@ set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 flush_dns_cache() { return 0; }
-mdutil() { echo "Indexing enabled."; }
+mkdir -p "$HOME/bin"
+printf '#!/bin/bash\necho "Indexing enabled."\n' > "$HOME/bin/mdutil"
+chmod +x "$HOME/bin/mdutil"
+PATH="$HOME/bin:$PATH"
 execute_optimization system_maintenance
 EOF
 
@@ -1170,8 +1176,11 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-route() { return 1; }
-dscacheutil() { return 1; }
+mkdir -p "$HOME/bin"
+printf '#!/bin/bash\nexit 1\n' > "$HOME/bin/route"
+printf '#!/bin/bash\nexit 1\n' > "$HOME/bin/dscacheutil"
+chmod +x "$HOME/bin/route" "$HOME/bin/dscacheutil"
+PATH="$HOME/bin:$PATH"
 optimize_sudo_available() { return 0; }
 sudo() {
     if [[ "$1" == "route" ]]; then
@@ -1179,7 +1188,7 @@ sudo() {
     fi
     return 7
 }
-export -f route dscacheutil optimize_sudo_available sudo
+export -f optimize_sudo_available sudo
 
 execute_optimization network_stack_optimize
 [[ "$(optimize_outcome_count failed)" == "1" ]] || exit 1
@@ -1753,17 +1762,21 @@ EOF
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-scutil() {
-    cat <<'NC'
+mock_bin="$HOME/vpn-connected-bin"
+mkdir -p "$mock_bin"
+cat > "$mock_bin/scutil" <<'MOCK'
+#!/bin/bash
+cat <<'OUTPUT'
 * (Disconnected)   AA1B2C3D-1111-2222-3333-444455556666   PPP     (L2TP)         "Office VPN"   [L2TP]
 * (Connected)      87654321-aaaa-bbbb-cccc-dddddddddddd   IPSec   (IKEv2)        "Remote Office"[IKEv2]
-NC
-}
-export -f scutil
+OUTPUT
+MOCK
 # Default route should NOT be consulted once scutil already proved a VPN active.
-route() { echo "should not be called" >&2; return 1; }
-export -f route
+printf '#!/bin/bash\ntouch "$HOME/route-called"\nexit 1\n' > "$mock_bin/route"
+chmod +x "$mock_bin/scutil" "$mock_bin/route"
+PATH="$mock_bin:$PATH"
 if has_active_vpn_interface; then echo "vpn"; else echo "no_vpn"; fi
+[[ ! -e "$HOME/route-called" ]] || echo "should not be called"
 EOF
 
 	[ "$status" -eq 0 ]
@@ -1775,23 +1788,19 @@ EOF
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-scutil() {
-    cat <<'NC'
+mock_bin="$HOME/vpn-disconnected-bin"
+mkdir -p "$mock_bin"
+cat > "$mock_bin/scutil" <<'MOCK'
+#!/bin/bash
+cat <<'OUTPUT'
 * (Disconnected)   AA1B2C3D-1111-2222-3333-444455556666   PPP     (L2TP)         "Office VPN"   [L2TP]
 * (Disconnected)   87654321-aaaa-bbbb-cccc-dddddddddddd   IPSec   (IKEv2)        "Remote Office"[IKEv2]
-NC
-}
+OUTPUT
+MOCK
 # Default route via en0 (no VPN). This is the user's case in #959.
-route() {
-    cat <<'ROUTE'
-   route to: default
-destination: default
-       mask: default
-    gateway: 192.168.1.1
-  interface: en0
-ROUTE
-}
-export -f scutil route
+printf '%s\n' '#!/bin/bash' 'echo "  interface: en0"' > "$mock_bin/route"
+chmod +x "$mock_bin/scutil" "$mock_bin/route"
+PATH="$mock_bin:$PATH"
 if has_active_vpn_interface; then echo "vpn"; else echo "no_vpn"; fi
 EOF
 
@@ -1804,18 +1813,13 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 # No system-managed VPN configured in scutil.
-scutil() { echo ""; }
+mock_bin="$HOME/vpn-full-tunnel-bin"
+mkdir -p "$mock_bin"
+printf '%s\n' '#!/bin/bash' 'exit 0' > "$mock_bin/scutil"
 # Default route owned by utun3 -> full-tunnel VPN (WireGuard / OpenVPN style).
-route() {
-    cat <<'ROUTE'
-   route to: default
-destination: default
-       mask: default
-    gateway: 10.8.0.1
-  interface: utun3
-ROUTE
-}
-export -f scutil route
+printf '%s\n' '#!/bin/bash' 'echo "  interface: utun3"' > "$mock_bin/route"
+chmod +x "$mock_bin/scutil" "$mock_bin/route"
+PATH="$mock_bin:$PATH"
 if has_active_vpn_interface; then echo "vpn"; else echo "no_vpn"; fi
 EOF
 
@@ -1830,17 +1834,12 @@ source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 # Private Relay / Continuity create utun* but the default route stays on en0.
 # The old netstat/ifconfig probe would have false-positived this; the new
 # probe must not.
-scutil() { echo ""; }
-route() {
-    cat <<'ROUTE'
-   route to: default
-destination: default
-       mask: default
-    gateway: 192.168.1.1
-  interface: en0
-ROUTE
-}
-export -f scutil route
+mock_bin="$HOME/vpn-private-relay-bin"
+mkdir -p "$mock_bin"
+printf '%s\n' '#!/bin/bash' 'exit 0' > "$mock_bin/scutil"
+printf '%s\n' '#!/bin/bash' 'echo "  interface: en0"' > "$mock_bin/route"
+chmod +x "$mock_bin/scutil" "$mock_bin/route"
+PATH="$mock_bin:$PATH"
 if has_active_vpn_interface; then echo "vpn"; else echo "no_vpn"; fi
 EOF
 

@@ -70,6 +70,7 @@ EOF
 
 	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
 	[[ "$output" == *"Failed to remove 1 old saved state(s)"* ]] || return 1
+	[[ "$output" != *"App saved states optimized"* ]] || return 1
 }
 
 @test "launch agent cleanup reports a failed removal" {
