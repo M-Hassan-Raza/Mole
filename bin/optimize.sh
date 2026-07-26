@@ -265,6 +265,7 @@ main() {
     fi
 
     export FIRST_ACTION=true
+    optimize_outcomes_reset
     local safe_count=0
     local index action health_name
     for ((index = 0; index < ${#MOLE_OPTIMIZE_ACTIONS[@]}; index++)); do
@@ -272,12 +273,20 @@ main() {
         health_name=${MOLE_OPTIMIZE_HEALTH_NAMES[$index]}
         safe_count=$((safe_count + 1))
         if command -v is_whitelisted > /dev/null && is_whitelisted "$action"; then
+            optimize_task_start
             opt_msg "Skipped (whitelisted): $health_name"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
+            optimize_task_finish "$action"
             continue
         fi
         announce_action "$health_name"
         execute_optimization "$action"
     done
+
+    if [[ "$(optimize_outcome_total)" -ne ${#MOLE_OPTIMIZE_ACTIONS[@]} ]]; then
+        log_error "Optimize task outcomes are incomplete"
+        return 1
+    fi
 
     export OPTIMIZE_SAFE_COUNT=$safe_count
     export OPTIMIZE_CONFIRM_COUNT=0

@@ -341,8 +341,10 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-opt_quarantine_cleanup() { echo "quarantine"; }
+opt_quarantine_cleanup() { echo "quarantine"; optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"; }
+optimize_outcomes_reset
 execute_optimization quarantine_cleanup
+[[ "$(optimize_outcome_count applied)" == "1" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
@@ -533,8 +535,10 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-opt_dock_refresh() { echo "dock"; }
+opt_dock_refresh() { echo "dock"; optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"; }
+optimize_outcomes_reset
 execute_optimization dock_refresh
+[[ "$(optimize_outcome_count applied)" == "1" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
@@ -724,8 +728,10 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-opt_prune_spotlight_orphan_rules() { echo "pruned"; }
+opt_prune_spotlight_orphan_rules() { echo "pruned"; optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"; }
+optimize_outcomes_reset
 execute_optimization spotlight_orphan_rules_cleanup
+[[ "$(optimize_outcome_count applied)" == "1" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
@@ -857,8 +863,10 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-opt_launch_agents_cleanup() { echo "launch_agents"; }
+opt_launch_agents_cleanup() { echo "launch_agents"; optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"; }
+optimize_outcomes_reset
 execute_optimization launch_agents_cleanup
+[[ "$(optimize_outcome_count applied)" == "1" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
@@ -1180,8 +1188,10 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
-opt_periodic_maintenance() { echo "periodic"; }
+opt_periodic_maintenance() { echo "periodic"; optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"; }
+optimize_outcomes_reset
 execute_optimization periodic_maintenance
+[[ "$(optimize_outcome_count applied)" == "1" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
@@ -1195,7 +1205,9 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 is_whitelisted() { [[ "$1" == "dock_refresh" ]]; }
 opt_dock_refresh() { echo "UNEXPECTED_DOCK"; }
+optimize_outcomes_reset
 execute_optimization dock_refresh
+[[ "$(optimize_outcome_count skipped)" == "1" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]

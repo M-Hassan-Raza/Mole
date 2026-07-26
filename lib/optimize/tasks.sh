@@ -1618,7 +1618,10 @@ execute_optimization() {
     local action="$1"
 
     if command -v is_whitelisted > /dev/null && is_whitelisted "$action"; then
+        optimize_task_start
         opt_msg "Skipped (whitelisted): $action"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
+        optimize_task_finish "$action"
         return 0
     fi
 
@@ -1632,5 +1635,7 @@ execute_optimization() {
         return 1
     fi
 
+    optimize_task_start
     "$handler"
+    optimize_task_finish "$action"
 }
