@@ -875,6 +875,7 @@ export -f periodic
 tmplog="$(mktemp /tmp/mole-test-daily.XXXXXX)"
 touch "$tmplog"
 MOLE_PERIODIC_LOG="$tmplog" opt_periodic_maintenance
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
 rm -f "$tmplog"
 EOF
 
@@ -899,6 +900,7 @@ chmod +x "$tmpdir/bin/stat"
 tmplog="$tmpdir/daily.out"
 touch "$tmplog"
 PATH="$tmpdir/bin:$PATH" MOLE_PERIODIC_LOG="$tmplog" opt_periodic_maintenance
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED" ]] || exit 1
 rm -rf "$tmpdir"
 EOF
 
@@ -917,6 +919,7 @@ export -f periodic
 tmplog="$(mktemp /tmp/mole-test-daily.XXXXXX)"
 touch -t "$(date -v-10d +%Y%m%d%H%M.%S)" "$tmplog"
 MOLE_PERIODIC_LOG="$tmplog" opt_periodic_maintenance
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_APPLIED" ]] || exit 1
 rm -f "$tmplog"
 EOF
 
@@ -932,10 +935,42 @@ source "$PROJECT_ROOT/lib/optimize/tasks.sh"
 periodic() { true; }
 export -f periodic
 MOLE_PERIODIC_LOG="/tmp/mole-test-nonexistent-daily.out" opt_periodic_maintenance
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_APPLIED" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
 	[[ "$output" == *"Periodic maintenance triggered"* ]]
+}
+
+@test "opt_periodic_maintenance reports skipped without admin access" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_NO_AUTH=1 /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+periodic() { true; }
+export -f periodic
+MOLE_PERIODIC_LOG="$HOME/missing-daily.out" opt_periodic_maintenance
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_SKIPPED" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Periodic maintenance skipped (requires sudo)"* ]] || return 1
+}
+
+@test "opt_periodic_maintenance reports command failure" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_NO_AUTH=0 MOLE_TEST_MODE=0 MOLE_OPTIMIZE_SUDO_AVAILABLE=true /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/optimize/tasks.sh"
+periodic() { true; }
+sudo() { return 7; }
+export -f periodic sudo
+MOLE_PERIODIC_LOG="$HOME/missing-daily.out" opt_periodic_maintenance
+[[ "$MOLE_OPTIMIZE_TASK_OUTCOME" == "$MOLE_OPTIMIZE_OUTCOME_FAILED" ]] || exit 1
+EOF
+
+	[[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+	[[ "$output" == *"Failed to run periodic maintenance (exit=7)"* ]] || return 1
 }
 
 @test "run_optimize_diagnostics flags sustained CloudShell as primary bottleneck" {

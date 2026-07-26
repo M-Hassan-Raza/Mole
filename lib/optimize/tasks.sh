@@ -1090,6 +1090,7 @@ opt_periodic_maintenance() {
 
         if [[ $age_days -lt $stale_days ]]; then
             opt_msg "Periodic maintenance already current (${age_days}d ago)"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_UNCHANGED"
             return 0
         fi
     fi
@@ -1097,6 +1098,7 @@ opt_periodic_maintenance() {
     if [[ "${MOLE_DRY_RUN:-0}" != "1" ]]; then
         if [[ "${MOLE_TEST_MODE:-0}" == "1" || "${MOLE_TEST_NO_AUTH:-0}" == "1" ]] || ! optimize_sudo_available; then
             opt_msg "Periodic maintenance skipped (requires sudo)"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_SKIPPED"
             return 0
         fi
         # Capture stderr so --debug can surface the real failure reason
@@ -1104,15 +1106,18 @@ opt_periodic_maintenance() {
         local periodic_output rc
         if periodic_output=$(sudo periodic daily weekly monthly 2>&1); then
             opt_msg "Periodic maintenance triggered"
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
         else
             rc=$?
             echo -e "  ${YELLOW}${ICON_WARNING}${NC} Failed to run periodic maintenance (exit=$rc)"
             if [[ -n "$periodic_output" ]]; then
                 debug_log "periodic stderr: $periodic_output"
             fi
+            optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_FAILED"
         fi
     else
         opt_msg "Periodic maintenance triggered"
+        optimize_task_result "$MOLE_OPTIMIZE_OUTCOME_APPLIED"
     fi
 }
 
