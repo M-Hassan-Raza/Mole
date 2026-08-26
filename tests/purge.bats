@@ -1443,6 +1443,25 @@ EOF
 	[[ "$result" == "ERROR" ]]
 }
 
+@test "get_dir_size_kb: returns TIMEOUT when the shared size budget is exhausted" {
+	mkdir -p "$HOME/www/budget-project/node_modules"
+
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/project.sh"
+_mole_timeout_with_deadline() { return 124; }
+run_with_timeout() {
+	printf 'unexpected du call\n' >&2
+	return 99
+}
+get_dir_size_kb "$HOME/www/budget-project/node_modules" "$((SECONDS + 30))"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "TIMEOUT" ]] || return 1
+}
+
 @test "clean_project_artifacts: restores caller INT/TERM traps" {
 	result=$(/bin/bash -c "
         set -euo pipefail

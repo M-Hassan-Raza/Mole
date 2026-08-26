@@ -827,10 +827,11 @@ _mole_purge_final_remove_guard() {
     purge_target_activity_still_safe "$path" "${_MOLE_PURGE_FINAL_WAS_RECENT:-true}"
 }
 
-# Args: $1 - path
+# Args: $1 - path, $2 - optional shared deadline in SECONDS
 # Get directory size in KB.
 get_dir_size_kb() {
     local path="$1"
+    local deadline="${2:-}"
     if [[ ! -d "$path" ]]; then
         echo "0"
         return
@@ -839,6 +840,13 @@ get_dir_size_kb() {
     local timeout_seconds="${MO_PURGE_SIZE_TIMEOUT_SEC:-15}"
     if [[ ! "$timeout_seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
         timeout_seconds=15
+    fi
+    if [[ -n "$deadline" ]]; then
+        timeout_seconds=$(_mole_timeout_with_deadline "$timeout_seconds" "$deadline") || {
+            debug_log "Size calculation budget exhausted before: $path"
+            echo "TIMEOUT"
+            return
+        }
     fi
 
     local du_output=""
@@ -1675,6 +1683,11 @@ clean_project_artifacts() {
     # filesystem cache, making du timeout and display "unknown" sizes.
     local -a _size_tmpfiles=()
     local -a _size_pids=()
+    local _size_total_timeout="$MOLE_TIMEOUT_DISK_VERIFY_SEC"
+    if [[ ! "$_size_total_timeout" =~ ^([2-9]|[1-9][0-9]+)$ ]]; then
+        _size_total_timeout=30
+    fi
+    local _size_deadline=$((SECONDS + _size_total_timeout))
     local _max_size_jobs
     _max_size_jobs=$(get_optimal_parallel_jobs io)
     if ! [[ "$_max_size_jobs" =~ ^[0-9]+$ ]] || [[ "$_max_size_jobs" -lt 1 ]]; then
@@ -1712,7 +1725,11 @@ clean_project_artifacts() {
         _stmp=$(mktemp)
         register_temp_file "$_stmp"
         _size_tmpfiles+=("$_stmp")
-        (get_dir_size_kb "$_sz_item" > "$_stmp" 2> /dev/null) < /dev/null &
+        if [[ $SECONDS -ge $_size_deadline ]]; then
+            printf 'TIMEOUT\n' > "$_stmp"
+            continue
+        fi
+        (get_dir_size_kb "$_sz_item" "$_size_deadline" > "$_stmp" 2> /dev/null) < /dev/null &
         _size_pids+=($!)
 
         if [[ ${#_size_pids[@]} -ge $_max_size_jobs ]]; then
