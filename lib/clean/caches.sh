@@ -536,6 +536,7 @@ clean_project_caches() {
     local -a root_matches_files=()
     local -a scan_pids=()
     local -a scan_statuses=()
+    local failed_scan_count=0
     local max_scan_jobs
     max_scan_jobs=$(get_optimal_parallel_jobs io)
     if ! [[ "$max_scan_jobs" =~ ^[0-9]+$ ]] || [[ "$max_scan_jobs" -lt 1 ]]; then
@@ -556,7 +557,10 @@ clean_project_caches() {
 
     for root in "${scan_roots[@]}"; do
         local root_matches_file
-        root_matches_file=$(create_temp_file) || continue
+        if ! root_matches_file=$(create_temp_file); then
+            failed_scan_count=$((failed_scan_count + 1))
+            continue
+        fi
         root_matches_files+=("$root_matches_file")
         scan_project_cache_root "$root" "$root_matches_file" < /dev/null &
         scan_pids+=($!)
@@ -574,7 +578,15 @@ clean_project_caches() {
     for ((scan_index = 0; scan_index < ${#root_matches_files[@]}; scan_index++)); do
         root_matches_file="${root_matches_files[$scan_index]}"
         local scan_rc="${scan_statuses[$scan_index]:-1}"
+        if [[ $scan_rc -ge 128 ]]; then
+            local pending_file
+            for pending_file in "${root_matches_files[@]}"; do
+                rm -f "$pending_file"
+            done
+            return "$scan_rc"
+        fi
         if [[ $scan_rc -ne 0 ]]; then
+            failed_scan_count=$((failed_scan_count + 1))
             rm -f "$root_matches_file"
             continue
         fi
@@ -590,4 +602,15 @@ clean_project_caches() {
             return "$process_rc"
         fi
     done
+
+    if [[ $failed_scan_count -gt 0 ]]; then
+        local scan_noun="root scans"
+        if [[ $failed_scan_count -eq 1 ]]; then
+            scan_noun="root scan"
+        fi
+        echo -e "  ${GRAY}${ICON_WARNING}${NC} Project caches · skipped ${failed_scan_count} slow/incomplete ${scan_noun}"
+        if declare -f note_activity > /dev/null 2>&1; then
+            note_activity
+        fi
+    fi
 }

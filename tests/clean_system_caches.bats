@@ -663,8 +663,32 @@ EOF
     elapsed=$(printf '%s\n' "$output" | awk -F= '/ELAPSED=/{print $2}' | tail -1)
     [[ "$elapsed" =~ ^[0-9]+$ ]] || return 1
     (( elapsed < 5 ))
+    [[ "$output" == *"Project caches · skipped 1 slow/incomplete root scan"* ]] || return 1
 
 	rm -rf "$HOME/.config/mole" "$HOME/SlowProjects" "$fake_bin"
+}
+
+@test "clean_project_caches propagates an interrupted root scan" {
+	local scan_home="$HOME/interrupted-project-scan"
+	mkdir -p "$scan_home/root"
+
+	run env HOME="$scan_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/caches.sh"
+discover_project_cache_roots() { printf '%s\n' "$HOME/root"; }
+scan_project_cache_root() {
+	: > "$2"
+	return 130
+}
+process_project_cache_matches() { printf 'UNEXPECTED_PROCESS\n'; }
+clean_rc=0
+clean_project_caches || clean_rc=$?
+printf 'RC=%s\n' "$clean_rc"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "RC=130" ]] || return 1
 }
 
 @test "scan_project_cache_root discards partial output when its producer times out" {
