@@ -515,29 +515,65 @@ clean_python_bytecode_cache_group() {
 clean_project_caches() {
     stop_inline_spinner 2> /dev/null || true
 
+    if [[ -t 1 ]]; then
+        MOLE_SPINNER_PREFIX="  "
+        start_inline_spinner "Searching project caches..."
+    fi
+
     local -a scan_roots=()
     local root
     while IFS= read -r root; do
         [[ -n "$root" ]] && scan_roots+=("$root")
     done < <(discover_project_cache_roots)
 
-    [[ ${#scan_roots[@]} -eq 0 ]] && return 0
-
-    if [[ -t 1 ]]; then
-        MOLE_SPINNER_PREFIX="  "
-        start_inline_spinner "Searching project caches..."
-    fi
-
-    for root in "${scan_roots[@]}"; do
-        local root_matches_file
-        root_matches_file=$(create_temp_file)
-        local scan_rc=0
-        scan_project_cache_root "$root" "$root_matches_file" || scan_rc=$?
-
+    if [[ ${#scan_roots[@]} -eq 0 ]]; then
         if [[ -t 1 ]]; then
             stop_inline_spinner
         fi
+        return 0
+    fi
 
+    local -a root_matches_files=()
+    local -a scan_pids=()
+    local -a scan_statuses=()
+    local max_scan_jobs
+    max_scan_jobs=$(get_optimal_parallel_jobs io)
+    if ! [[ "$max_scan_jobs" =~ ^[0-9]+$ ]] || [[ "$max_scan_jobs" -lt 1 ]]; then
+        max_scan_jobs=1
+    elif [[ "$max_scan_jobs" -gt 4 ]]; then
+        max_scan_jobs=4
+    fi
+
+    _wait_for_project_cache_scan_batch() {
+        local scan_pid
+        for scan_pid in "${scan_pids[@]+"${scan_pids[@]}"}"; do
+            local scan_rc=0
+            wait "$scan_pid" 2> /dev/null || scan_rc=$?
+            scan_statuses+=("$scan_rc")
+        done
+        scan_pids=()
+    }
+
+    for root in "${scan_roots[@]}"; do
+        local root_matches_file
+        root_matches_file=$(create_temp_file) || continue
+        root_matches_files+=("$root_matches_file")
+        scan_project_cache_root "$root" "$root_matches_file" < /dev/null &
+        scan_pids+=($!)
+        if [[ ${#scan_pids[@]} -ge $max_scan_jobs ]]; then
+            _wait_for_project_cache_scan_batch
+        fi
+    done
+    _wait_for_project_cache_scan_batch
+
+    if [[ -t 1 ]]; then
+        stop_inline_spinner
+    fi
+
+    local scan_index
+    for ((scan_index = 0; scan_index < ${#root_matches_files[@]}; scan_index++)); do
+        root_matches_file="${root_matches_files[$scan_index]}"
+        local scan_rc="${scan_statuses[$scan_index]:-1}"
         if [[ $scan_rc -ne 0 ]]; then
             rm -f "$root_matches_file"
             continue
@@ -546,15 +582,12 @@ clean_project_caches() {
         local process_rc=0
         process_project_cache_matches "$root_matches_file" || process_rc=$?
         rm -f "$root_matches_file"
-        [[ $process_rc -eq 0 ]] || return "$process_rc"
-
-        if [[ -t 1 ]]; then
-            MOLE_SPINNER_PREFIX="  "
-            start_inline_spinner "Searching project caches..."
+        if [[ $process_rc -ne 0 ]]; then
+            local pending_file
+            for pending_file in "${root_matches_files[@]}"; do
+                rm -f "$pending_file"
+            done
+            return "$process_rc"
         fi
     done
-
-    if [[ -t 1 ]]; then
-        stop_inline_spinner
-    fi
 }

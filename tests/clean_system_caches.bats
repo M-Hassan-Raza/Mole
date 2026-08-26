@@ -551,7 +551,52 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"Next.js build cache|$HOME/go/src/github.com/example/demo/.next/cache/test.cache"* ]] || return 1
 
-    rm -rf "$HOME/go"
+	rm -rf "$HOME/go"
+}
+
+@test "clean_project_caches scans independent roots concurrently within its bound" {
+	local scan_home="$HOME/concurrent-project-scans"
+	mkdir -p "$scan_home/root-1" "$scan_home/root-2" "$scan_home/root-3" "$scan_home/root-4"
+
+	run env HOME="$scan_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/caches.sh"
+discover_project_cache_roots() {
+	printf '%s\n' "$HOME/root-1" "$HOME/root-2" "$HOME/root-3" "$HOME/root-4"
+}
+get_optimal_parallel_jobs() { printf '2\n'; }
+scan_project_cache_root() {
+	: > "$2"
+	touch "$HOME/active-${1##*/}"
+	while [[ ! -e "$HOME/release-scans" ]]; do
+		sleep 0.02
+	done
+	rm -f "$HOME/active-${1##*/}"
+}
+process_project_cache_matches() { :; }
+
+(
+	for _ in {1..100}; do
+		active_count=$(command find "$HOME" -maxdepth 1 -name 'active-*' | wc -l | tr -d ' ')
+		if [[ "$active_count" -ge 2 ]]; then
+			printf '%s\n' "$active_count" > "$HOME/observed-concurrency"
+			touch "$HOME/release-scans"
+			exit 0
+		fi
+		sleep 0.02
+	done
+	exit 1
+) &
+monitor_pid=$!
+
+clean_project_caches
+wait "$monitor_pid"
+printf 'CONCURRENCY=%s\n' "$(cat "$HOME/observed-concurrency")"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "CONCURRENCY=2" ]] || return 1
 }
 
 @test "discover_project_cache_roots dedupes aliased roots by filesystem identity" {
