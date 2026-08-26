@@ -989,7 +989,34 @@ EOF
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"Group Containers logs/caches"* ]] || return 1
-    [[ "$output" == *"PASS"* ]]
+	[[ "$output" == *"PASS"* ]]
+}
+
+@test "clean_group_container_caches reuses exact item sizes at removal" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" DRY_RUN=false /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/user.sh"
+start_section_spinner() { :; }
+stop_section_spinner() { :; }
+note_activity() { :; }
+should_protect_data() { return 1; }
+should_protect_path() { return 1; }
+is_path_whitelisted() { return 1; }
+get_path_size_kb() { printf '77\n'; }
+safe_remove() { printf 'REMOVE=%s SILENT=%s SIZE=%s\n' "$1" "$2" "$3"; }
+files_cleaned=0
+total_size_cleaned=0
+total_items=0
+
+item="$HOME/Library/Group Containers/group.com.example.tool/Library/Caches/cache.db"
+mkdir -p "${item%/*}"
+printf 'cache\n' > "$item"
+clean_group_container_caches
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == *"REMOVE=$HOME/Library/Group Containers/group.com.example.tool/Library/Caches/cache.db SILENT=true SIZE=77"* ]] || return 1
 }
 
 @test "clean_handoff_pasteboard_cache removes stale items and keeps fresh ones (#1178)" {

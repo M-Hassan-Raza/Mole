@@ -1301,7 +1301,7 @@ clean_group_container_caches() {
                         candidate_size_kb=$((candidate_size_kb + item_size))
                         continue
                     fi
-                    if safe_remove "$item" true 2> /dev/null; then
+                    if safe_remove "$item" true "$item_size" 2> /dev/null; then
                         candidate_changed=true
                         candidate_size_kb=$((candidate_size_kb + item_size))
                     fi
