@@ -576,15 +576,19 @@ clean_project_caches() {
 
     local scan_index
     for ((scan_index = 0; scan_index < ${#root_matches_files[@]}; scan_index++)); do
-        root_matches_file="${root_matches_files[$scan_index]}"
-        local scan_rc="${scan_statuses[$scan_index]:-1}"
-        if [[ $scan_rc -ge 128 ]]; then
+        local preflight_rc="${scan_statuses[$scan_index]:-1}"
+        if [[ $preflight_rc -ge 128 ]]; then
             local pending_file
             for pending_file in "${root_matches_files[@]}"; do
                 rm -f "$pending_file"
             done
-            return "$scan_rc"
+            return "$preflight_rc"
         fi
+    done
+
+    for ((scan_index = 0; scan_index < ${#root_matches_files[@]}; scan_index++)); do
+        root_matches_file="${root_matches_files[$scan_index]}"
+        local scan_rc="${scan_statuses[$scan_index]:-1}"
         if [[ $scan_rc -ne 0 ]]; then
             failed_scan_count=$((failed_scan_count + 1))
             rm -f "$root_matches_file"

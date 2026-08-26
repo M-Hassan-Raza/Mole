@@ -691,6 +691,30 @@ EOF
 	[[ "$output" == "RC=130" ]] || return 1
 }
 
+@test "clean_project_caches processes no roots when a later scan is interrupted" {
+	local scan_home="$HOME/interrupted-project-scan-batch"
+	mkdir -p "$scan_home/root-1" "$scan_home/root-2"
+
+	run env HOME="$scan_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/caches.sh"
+discover_project_cache_roots() { printf '%s\n' "$HOME/root-1" "$HOME/root-2"; }
+scan_project_cache_root() {
+	: > "$2"
+	[[ "$1" == "$HOME/root-1" ]] && return 0
+	return 130
+}
+process_project_cache_matches() { touch "$HOME/processed"; }
+clean_rc=0
+clean_project_caches || clean_rc=$?
+printf 'RC=%s PROCESSED=%s\n' "$clean_rc" "$([[ -e "$HOME/processed" ]] && printf yes || printf no)"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "RC=130 PROCESSED=no" ]] || return 1
+}
+
 @test "scan_project_cache_root discards partial output when its producer times out" {
 	mkdir -p "$HOME/Projects/app/.next/cache"
 	touch "$HOME/Projects/app/package.json"
