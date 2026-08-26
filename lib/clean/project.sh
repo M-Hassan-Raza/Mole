@@ -565,6 +565,7 @@ scan_purge_targets() {
             "--min-depth" "$min_depth"
             "--max-depth" "$max_depth"
             "--threads" "8"
+            "--prune"
             "--exclude" ".git"
             "--exclude" "Library"
             "--exclude" ".Trash"
@@ -583,6 +584,10 @@ scan_purge_targets() {
             "--exclude" ".Trash"
             "--exclude" "Applications"
         )
+        local purge_target
+        for purge_target in "${PURGE_TARGETS[@]}"; do
+            fd_tag_args+=("--exclude" "$purge_target")
+        done
 
         # Trust fd when it exits successfully, including an empty result set.
         # Empty scans are common in healthy project trees; falling back to find
@@ -641,7 +646,7 @@ scan_purge_targets() {
 
         if [[ $find_status -eq 0 ]]; then
             run_with_timeout "$_scan_timeout" find "$search_path" -mindepth "$cachedir_tag_min_depth" -maxdepth "$cachedir_tag_max_depth" \
-                \( "${prune_expr[@]}" \) -prune -o \
+                \( -type d \( \( "${prune_expr[@]}" \) -o \( "${target_expr[@]}" \) \) \) -prune -o \
                 -type f -name "$MOLE_CACHEDIR_TAG_NAME" -print \
                 2> /dev/null > "$tag_output" || find_status=$?
         fi

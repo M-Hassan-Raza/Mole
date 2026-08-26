@@ -1045,6 +1045,51 @@ EOF
 	[ "$status" -eq 0 ]
 }
 
+@test "scan_purge_targets: prunes matched artifacts from target and tag scans" {
+	mkdir -p "$HOME/.config/mole" "$HOME/www/test-project/node_modules"
+	printf '%s\n' "$HOME/www" > "$HOME/.config/mole/purge_paths"
+
+	local mock_bin="$HOME/mock-pruned-fd"
+	mkdir -p "$mock_bin"
+	cat > "$mock_bin/fd" <<'EOF'
+#!/bin/bash
+args=" $* "
+case "$args" in
+    *" --type d "*)
+        [[ "$args" == *" --prune "* ]] || exit 9
+        printf '%s\n' "$HOME/www/test-project/node_modules"
+        ;;
+    *" --type f "*)
+        [[ "$args" == *" --exclude node_modules "* ]] || exit 10
+        ;;
+    *) exit 11 ;;
+esac
+EOF
+	chmod +x "$mock_bin/fd"
+	cat > "$mock_bin/find" <<'EOF'
+#!/bin/bash
+printf 'find-called\n' >> "$HOME/find-called"
+exit 12
+EOF
+	chmod +x "$mock_bin/find"
+
+	local scan_output
+	scan_output="$(mktemp)"
+
+	run env HOME="$HOME" PATH="$mock_bin:$PATH" PROJECT_ROOT="$PROJECT_ROOT" SCAN_OUTPUT="$scan_output" \
+		/bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/clean/project.sh"
+scan_purge_targets "$HOME/www" "$SCAN_OUTPUT"
+[[ ! -e "$HOME/find-called" ]] || exit 1
+grep -Fx "$HOME/www/test-project/node_modules" "$SCAN_OUTPUT"
+EOF
+
+	rm -f "$scan_output"
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "$HOME/www/test-project/node_modules" ]] || return 1
+}
+
 @test "scan_purge_targets: discards a failed find target scan prefix" {
 	mkdir -p "$HOME/.config/mole" "$HOME/www/test-project/node_modules"
 	printf '%s\n' "$HOME/www" > "$HOME/.config/mole/purge_paths"
