@@ -1182,16 +1182,8 @@ EOF
 	mkdir -p "$mock_bin"
 	cat > "$mock_bin/find" <<'EOF'
 #!/bin/bash
-result_type=""
-while [[ $# -gt 0 ]]; do
-	if [[ "$1" == "-type" && $# -gt 1 ]]; then
-		result_type="$2"
-		break
-	fi
-	shift
-done
-
-if [[ "$result_type" == "d" ]]; then
+args=" $* "
+if [[ "$args" != *" -type f "* ]]; then
 	printf '%s\n' "$HOME/www/test-project/node_modules"
 	exit 0
 fi
@@ -1218,6 +1210,56 @@ EOF
 	rm -f "$scan_output"
 	[ "$status" -eq 0 ] || return 1
 	[[ "$output" == *"STATUS=9"* ]] || return 1
+}
+
+@test "scan_purge_targets: shares one deadline across fd stages and fallback" {
+	mkdir -p "$HOME/.config/mole" "$HOME/www/test-project/node_modules"
+	printf '%s\n' "$HOME/www" > "$HOME/.config/mole/purge_paths"
+
+	local mock_bin="$HOME/mock-shared-scan-deadline"
+	mkdir -p "$mock_bin"
+	cat > "$mock_bin/fd" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$HOME/www/test-project/node_modules"
+EOF
+	chmod +x "$mock_bin/fd"
+	cat > "$mock_bin/find" <<'EOF'
+#!/bin/bash
+printf 'find-called\n' >> "$HOME/find-called"
+exit 0
+EOF
+	chmod +x "$mock_bin/find"
+
+	local scan_output
+	scan_output="$(mktemp)"
+
+	run env HOME="$HOME" PATH="$mock_bin:$PATH" PROJECT_ROOT="$PROJECT_ROOT" SCAN_OUTPUT="$scan_output" \
+		/bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/clean/project.sh"
+
+_mole_timeout_with_deadline() {
+	local calls=0
+	[[ -f "$HOME/deadline-calls" ]] && calls="$(cat "$HOME/deadline-calls")"
+	calls=$((calls + 1))
+	printf '%s\n' "$calls" > "$HOME/deadline-calls"
+	if [[ $calls -gt 1 ]]; then
+		return 124
+	fi
+	printf '5\n'
+}
+
+scan_status=0
+scan_purge_targets "$HOME/www" "$SCAN_OUTPUT" || scan_status=$?
+printf 'STATUS=%s CALLS=%s\n' "$scan_status" "$(cat "$HOME/deadline-calls")"
+[[ "$scan_status" -eq 124 ]]
+[[ ! -s "$SCAN_OUTPUT" ]]
+[[ ! -e "$HOME/find-called" ]]
+EOF
+
+	rm -f "$scan_output"
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "STATUS=124 CALLS=3" ]] || return 1
 }
 
 @test "is_recently_modified: detects recent projects" {

@@ -490,13 +490,22 @@ scan_purge_targets() {
 
     local cachedir_tag_min_depth=$((min_depth + 1))
     local cachedir_tag_max_depth=$((max_depth + 1))
+    local scan_timeout="${MO_PURGE_SCAN_TIMEOUT_SEC:-60}"
+    [[ "$scan_timeout" =~ ^[1-9][0-9]*$ ]] || scan_timeout=60
+    [[ "$scan_timeout" -ge 2 ]] || scan_timeout=2
+    local scan_deadline=$((SECONDS + scan_timeout))
+    local scan_stage_timeout=""
 
     # Update current scanning path
     local stats_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mole"
     echo "$search_path" > "$stats_dir/purge_scanning" 2> /dev/null || true
 
     emit_valid_cachedir_tag_dirs() {
+        local deadline="$1"
         while IFS= read -r tag_file; do
+            if [[ $SECONDS -ge $deadline ]]; then
+                return 124
+            fi
             [[ -n "$tag_file" ]] || continue
             local cache_dir="${tag_file%/*}"
             if [[ -n "$cache_dir" ]] && mole_dir_has_cachedir_tag "$cache_dir"; then
@@ -508,11 +517,15 @@ scan_purge_targets() {
     # Helper to process raw results
     process_scan_results() {
         local input_file="$1"
+        local deadline="$2"
         if [[ -f "$input_file" ]]; then
             local process_status=0
             filter_nested_artifacts < "$input_file" |
                 (
                     while IFS= read -r item; do
+                        if [[ $SECONDS -ge $deadline ]]; then
+                            exit 124
+                        fi
                         # Check if we should abort (scanning file removed by Ctrl+C)
                         if [[ ! -f "$stats_dir/purge_scanning" ]]; then
                             exit 130
@@ -525,7 +538,7 @@ scan_purge_targets() {
                             echo "$project_dir" > "$stats_dir/purge_scanning" 2> /dev/null || true
                         fi
                     done
-                ) | filter_protected_artifacts > "$processed_output" || process_status=$?
+                ) | filter_protected_artifacts "$deadline" > "$processed_output" || process_status=$?
 
             if [[ $process_status -ne 0 ]]; then
                 rm -f "$processed_output" 2> /dev/null || true
@@ -591,19 +604,24 @@ scan_purge_targets() {
         # Trust fd when it exits successfully, including an empty result set.
         # Empty scans are common in healthy project trees; falling back to find
         # doubles the scan cost and can make "nothing to clean" feel slow.
-        local _scan_timeout="${MO_PURGE_SCAN_TIMEOUT_SEC:-60}"
         local fd_status=0
-        run_with_timeout "$_scan_timeout" fd "${fd_args[@]}" "$pattern" "$search_path" \
-            2> /dev/null > "$target_output" || fd_status=$?
+        scan_stage_timeout=$(_mole_timeout_with_deadline "$scan_timeout" "$scan_deadline") || fd_status=$?
         if [[ $fd_status -eq 0 ]]; then
-            run_with_timeout "$_scan_timeout" fd "${fd_tag_args[@]}" "^${MOLE_CACHEDIR_TAG_NAME}$" "$search_path" \
+            run_with_timeout "$scan_stage_timeout" fd "${fd_args[@]}" "$pattern" "$search_path" \
+                2> /dev/null > "$target_output" || fd_status=$?
+        fi
+        if [[ $fd_status -eq 0 ]]; then
+            scan_stage_timeout=$(_mole_timeout_with_deadline "$scan_timeout" "$scan_deadline") || fd_status=$?
+        fi
+        if [[ $fd_status -eq 0 ]]; then
+            run_with_timeout "$scan_stage_timeout" fd "${fd_tag_args[@]}" "^${MOLE_CACHEDIR_TAG_NAME}$" "$search_path" \
                 2> /dev/null > "$tag_output" || fd_status=$?
         fi
         if [[ $fd_status -eq 0 ]]; then
-            emit_valid_cachedir_tag_dirs < "$tag_output" >> "$target_output" || fd_status=$?
+            emit_valid_cachedir_tag_dirs "$scan_deadline" < "$tag_output" >> "$target_output" || fd_status=$?
         fi
         if [[ $fd_status -eq 0 ]]; then
-            process_scan_results "$target_output" || fd_status=$?
+            process_scan_results "$target_output" "$scan_deadline" || fd_status=$?
         fi
         if [[ $fd_status -eq 0 ]]; then
             debug_log "Using fd for scanning"
@@ -636,24 +654,29 @@ scan_purge_targets() {
 
         # Use plain `find` here for compatibility with environments where
         # `command find` behaves inconsistently in this complex expression.
-        local _scan_timeout="${MO_PURGE_SCAN_TIMEOUT_SEC:-60}"
         local find_status=0
-        run_with_timeout "$_scan_timeout" find "$search_path" -mindepth "$min_depth" -maxdepth "$max_depth" -type d \
-            \( "${prune_expr[@]}" \) -prune -o \
-            \( "${target_expr[@]}" \) -print -prune \
-            2> /dev/null > "$target_output" || find_status=$?
+        scan_stage_timeout=$(_mole_timeout_with_deadline "$scan_timeout" "$scan_deadline") || find_status=$?
+        if [[ $find_status -eq 0 ]]; then
+            run_with_timeout "$scan_stage_timeout" find "$search_path" -mindepth "$min_depth" -maxdepth "$max_depth" -type d \
+                \( "${prune_expr[@]}" \) -prune -o \
+                \( "${target_expr[@]}" \) -print -prune \
+                2> /dev/null > "$target_output" || find_status=$?
+        fi
 
         if [[ $find_status -eq 0 ]]; then
-            run_with_timeout "$_scan_timeout" find "$search_path" -mindepth "$cachedir_tag_min_depth" -maxdepth "$cachedir_tag_max_depth" \
+            scan_stage_timeout=$(_mole_timeout_with_deadline "$scan_timeout" "$scan_deadline") || find_status=$?
+        fi
+        if [[ $find_status -eq 0 ]]; then
+            run_with_timeout "$scan_stage_timeout" find "$search_path" -mindepth "$cachedir_tag_min_depth" -maxdepth "$cachedir_tag_max_depth" \
                 \( -type d \( \( "${prune_expr[@]}" \) -o \( "${target_expr[@]}" \) \) \) -prune -o \
                 -type f -name "$MOLE_CACHEDIR_TAG_NAME" -print \
                 2> /dev/null > "$tag_output" || find_status=$?
         fi
         if [[ $find_status -eq 0 ]]; then
-            emit_valid_cachedir_tag_dirs < "$tag_output" >> "$target_output" || find_status=$?
+            emit_valid_cachedir_tag_dirs "$scan_deadline" < "$tag_output" >> "$target_output" || find_status=$?
         fi
         if [[ $find_status -eq 0 ]]; then
-            process_scan_results "$target_output" || find_status=$?
+            process_scan_results "$target_output" "$scan_deadline" || find_status=$?
         fi
 
         cleanup_scan_outputs
@@ -686,7 +709,11 @@ filter_nested_artifacts() {
 }
 
 filter_protected_artifacts() {
+    local deadline="${1:-}"
     while IFS= read -r item; do
+        if [[ "$deadline" =~ ^[0-9]+$ && $SECONDS -ge $deadline ]]; then
+            return 124
+        fi
         if ! is_protected_purge_artifact "$item"; then
             echo "$item"
         fi
