@@ -512,21 +512,22 @@ scan_purge_targets() {
         local input_file="$1"
         if [[ -f "$input_file" ]]; then
             local process_status=0
-            (
-                while IFS= read -r item; do
-                    # Check if we should abort (scanning file removed by Ctrl+C)
-                    if [[ ! -f "$stats_dir/purge_scanning" ]]; then
-                        exit 130
-                    fi
+            filter_nested_artifacts < "$input_file" |
+                (
+                    while IFS= read -r item; do
+                        # Check if we should abort (scanning file removed by Ctrl+C)
+                        if [[ ! -f "$stats_dir/purge_scanning" ]]; then
+                            exit 130
+                        fi
 
-                    if [[ -n "$item" ]] && is_safe_project_artifact "$item" "$search_path"; then
-                        echo "$item"
-                        # Update scanning path to show current project directory
-                        local project_dir="${item%/*}"
-                        echo "$project_dir" > "$stats_dir/purge_scanning" 2> /dev/null || true
-                    fi
-                done < "$input_file"
-            ) | filter_nested_artifacts | filter_protected_artifacts > "$processed_output" || process_status=$?
+                        if [[ -n "$item" ]] && is_safe_project_artifact "$item" "$search_path"; then
+                            echo "$item"
+                            # Update scanning path to show current project directory
+                            local project_dir="${item%/*}"
+                            echo "$project_dir" > "$stats_dir/purge_scanning" 2> /dev/null || true
+                        fi
+                    done
+                ) | filter_protected_artifacts > "$processed_output" || process_status=$?
 
             if [[ $process_status -ne 0 ]]; then
                 rm -f "$processed_output" 2> /dev/null || true

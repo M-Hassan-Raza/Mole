@@ -1090,6 +1090,44 @@ EOF
 	[[ "$output" == "$HOME/www/test-project/node_modules" ]] || return 1
 }
 
+@test "scan_purge_targets: removes nested candidates before physical safety checks" {
+	mkdir -p "$HOME/.config/mole" "$HOME/www/test-project/node_modules/nested/dist"
+	printf '%s\n' "$HOME/www" > "$HOME/.config/mole/purge_paths"
+
+	local mock_bin="$HOME/mock-nested-fd"
+	mkdir -p "$mock_bin"
+	cat > "$mock_bin/fd" <<'EOF'
+#!/bin/bash
+args=" $* "
+if [[ "$args" == *" --type d "* ]]; then
+    printf '%s\n' \
+        "$HOME/www/test-project/node_modules" \
+        "$HOME/www/test-project/node_modules/nested/dist"
+fi
+EOF
+	chmod +x "$mock_bin/fd"
+
+	local scan_output
+	scan_output="$(mktemp)"
+
+	run env HOME="$HOME" PATH="$mock_bin:$PATH" PROJECT_ROOT="$PROJECT_ROOT" SCAN_OUTPUT="$scan_output" \
+		/bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/clean/project.sh"
+is_safe_project_artifact() {
+    printf '%s\n' "$1" >> "$HOME/safety-calls"
+    return 0
+}
+scan_purge_targets "$HOME/www" "$SCAN_OUTPUT"
+grep -Fx "$HOME/www/test-project/node_modules" "$SCAN_OUTPUT"
+[[ "$(wc -l < "$HOME/safety-calls" | tr -d ' ')" -eq 1 ]]
+EOF
+
+	rm -f "$scan_output"
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "$HOME/www/test-project/node_modules" ]] || return 1
+}
+
 @test "scan_purge_targets: discards a failed find target scan prefix" {
 	mkdir -p "$HOME/.config/mole" "$HOME/www/test-project/node_modules"
 	printf '%s\n' "$HOME/www" > "$HOME/.config/mole/purge_paths"
