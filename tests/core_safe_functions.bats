@@ -2203,7 +2203,33 @@ EOF
         echo "$output"
         return 1
     }
-    [[ "$output" == *"HELPER=0"* ]]
+	[[ "$output" == *"HELPER=0"* ]]
+}
+
+@test "cache owner probes reuse one process table snapshot" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/file_ops.sh"
+ps_calls=$(mktemp)
+ps() {
+	printf 'call\n' >> "$ps_calls"
+	cat <<'TABLE'
+  PID  PPID COMM             ARGS
+  601     1 /Applications/Example.app/Contents/MacOS/Example /Applications/Example.app/Contents/MacOS/Example com.example.First
+TABLE
+}
+first_state=0
+_mole_user_cache_owner_process_state "com.example.First" || first_state=$?
+second_state=0
+_mole_user_cache_owner_process_state "com.example.Second" || second_state=$?
+call_count=$(wc -l < "$ps_calls" | tr -d ' ')
+rm -f "$ps_calls"
+printf 'FIRST=%s SECOND=%s CALLS=%s STATE=%s\n' \
+	"$first_state" "$second_state" "$call_count" "$_MOLE_PROCESS_TABLE_STATE"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "FIRST=0 SECOND=1 CALLS=1 STATE=ok" ]] || return 1
 }
 
 # Mole's own size probe runs `du` over the very directory it is judging, so the

@@ -239,10 +239,9 @@ _mole_sqlite_family_base_path() {
 _MOLE_PROCESS_TABLE=""
 _MOLE_PROCESS_TABLE_STATE=""
 
-_mole_process_table() {
+_mole_load_process_table() {
     if [[ -n "${_MOLE_PROCESS_TABLE_STATE:-}" ]]; then
         [[ "$_MOLE_PROCESS_TABLE_STATE" == "ok" ]] || return 1
-        printf '%s\n' "$_MOLE_PROCESS_TABLE"
         return 0
     fi
 
@@ -310,7 +309,6 @@ _mole_process_table() {
 
     _MOLE_PROCESS_TABLE="$filtered"
     _MOLE_PROCESS_TABLE_STATE="ok"
-    printf '%s\n' "$_MOLE_PROCESS_TABLE"
     return 0
 }
 
@@ -346,11 +344,11 @@ _mole_user_cache_owner_process_state() {
         *"${cache_token}2|"*) return 2 ;;
     esac
 
-    local table=""
-    if ! table=$(_mole_process_table); then
+    if ! _mole_load_process_table; then
         # An unreadable process table is not proof the owner is idle.
         return 2
     fi
+    local table="$_MOLE_PROCESS_TABLE"
 
     # Feed the table by here-string, never through a pipe. `grep -q` exits on
     # its first match, and the printf still writing into that closed pipe takes
