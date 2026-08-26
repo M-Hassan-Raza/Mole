@@ -248,6 +248,7 @@ scan_project_cache_root() {
     local output_file="$2"
     local scan_timeout="${MOLE_PROJECT_CACHE_SCAN_TIMEOUT:-6}"
     [[ -d "$root" ]] || return 0
+    : > "$output_file"
 
     local -a find_args=(
         find -P "$root" -maxdepth 9 -mount
@@ -259,11 +260,26 @@ scan_project_cache_root() {
     )
 
     local status=0
-    local tmp_file
-    tmp_file=$(create_temp_file)
-    run_with_timeout "$scan_timeout" "${find_args[@]}" > "$tmp_file" 2> /dev/null || status=$?
+    local scan_file
+    scan_file=$(create_temp_file) || return 1
+    local processed_file
+    processed_file=$(create_temp_file) || {
+        rm -f "$scan_file"
+        return 1
+    }
+    run_with_timeout "$scan_timeout" "${find_args[@]}" > "$scan_file" 2> /dev/null || status=$?
 
-    if [[ -s "$tmp_file" ]]; then
+    if [[ $status -ne 0 ]]; then
+        rm -f "$scan_file" "$processed_file"
+        if [[ $status -eq 124 ]]; then
+            debug_log "Project cache scan timed out: $root"
+        else
+            debug_log "Project cache scan failed (${status}): $root"
+        fi
+        return "$status"
+    fi
+
+    if [[ -s "$scan_file" ]]; then
         while IFS= read -r match_path; do
             [[ -z "$match_path" ]] && continue
             # Skip __pycache__ dirs with no .pyc/.pyo files (empty or already cleaned)
@@ -273,15 +289,13 @@ scan_project_cache_root() {
             local project_root=""
             project_root=$(project_cache_group_root "$root" "$match_path")
             [[ -z "$project_root" ]] && project_root="$root"
-            printf '%s\t%s\n' "$project_root" "$match_path" >> "$output_file"
-        done < "$tmp_file"
+            printf '%s\t%s\n' "$project_root" "$match_path" >> "$processed_file"
+        done < "$scan_file"
     fi
-    rm -f "$tmp_file"
-
-    if [[ $status -eq 124 ]]; then
-        debug_log "Project cache scan timed out: $root"
-    elif [[ $status -ne 0 ]]; then
-        debug_log "Project cache scan failed (${status}): $root"
+    rm -f "$scan_file"
+    if ! mv "$processed_file" "$output_file"; then
+        rm -f "$processed_file"
+        return 1
     fi
 
     return 0
@@ -517,10 +531,16 @@ clean_project_caches() {
     for root in "${scan_roots[@]}"; do
         local root_matches_file
         root_matches_file=$(create_temp_file)
-        scan_project_cache_root "$root" "$root_matches_file"
+        local scan_rc=0
+        scan_project_cache_root "$root" "$root_matches_file" || scan_rc=$?
 
         if [[ -t 1 ]]; then
             stop_inline_spinner
+        fi
+
+        if [[ $scan_rc -ne 0 ]]; then
+            rm -f "$root_matches_file"
+            continue
         fi
 
         local process_rc=0

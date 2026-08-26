@@ -392,6 +392,7 @@ EOF
 
 	[ "$status" -eq 0 ] || return 1
 	[[ "$output" == *"REMOVE=$cache_dir SILENT=true SIZE=321"* ]] || return 1
+	rm -rf "$HOME/Projects"
 }
 
 @test "pycache_has_bytecode checks direct bytecode files without spawning find" {
@@ -618,7 +619,31 @@ EOF
     [[ "$elapsed" =~ ^[0-9]+$ ]] || return 1
     (( elapsed < 5 ))
 
-    rm -rf "$HOME/.config/mole" "$HOME/SlowProjects" "$fake_bin"
+	rm -rf "$HOME/.config/mole" "$HOME/SlowProjects" "$fake_bin"
+}
+
+@test "scan_project_cache_root discards partial output when its producer times out" {
+	mkdir -p "$HOME/Projects/app/.next/cache"
+	touch "$HOME/Projects/app/package.json"
+	local output_file
+	output_file=$(mktemp)
+
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" OUTPUT_FILE="$output_file" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/caches.sh"
+run_with_timeout() {
+	printf '%s\n' "$HOME/Projects/app/.next"
+	return 124
+}
+scan_rc=0
+scan_project_cache_root "$HOME/Projects" "$OUTPUT_FILE" || scan_rc=$?
+printf 'STATUS=%s SIZE=%s\n' "$scan_rc" "$(wc -c < "$OUTPUT_FILE" | tr -d ' ')"
+EOF
+
+	rm -rf "$HOME/Projects" "$output_file"
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "STATUS=124 SIZE=0" ]] || return 1
 }
 
 @test "scan_project_cache_root prunes conda and site-packages" {
