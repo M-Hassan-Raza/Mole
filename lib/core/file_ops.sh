@@ -239,6 +239,12 @@ _mole_sqlite_family_base_path() {
 _MOLE_PROCESS_TABLE=""
 _MOLE_PROCESS_TABLE_STATE=""
 
+_mole_reset_process_snapshot() {
+    _MOLE_PROCESS_TABLE=""
+    _MOLE_PROCESS_TABLE_STATE=""
+    _MOLE_USER_CACHE_OWNER_STATE_CACHE=""
+}
+
 _mole_load_process_table() {
     if [[ -n "${_MOLE_PROCESS_TABLE_STATE:-}" ]]; then
         [[ "$_MOLE_PROCESS_TABLE_STATE" == "ok" ]] || return 1
@@ -1055,6 +1061,7 @@ safe_remove() {
     # Recheck live-owner / open-SQLite state after size probing: a helper can
     # launch while du is walking the tree (same race class as the compiled
     # model cache check above).
+    _mole_reset_process_snapshot
     if _mole_should_refuse_live_user_cache_path "$path"; then
         debug_log "Skipped removal after live user cache appeared: $path"
         log_operation "${MOLE_CURRENT_COMMAND:-clean}" "SKIPPED" "$path" "live user cache"

@@ -2243,13 +2243,54 @@ _mole_user_cache_owner_process_state "com.example.First" || first_state=$?
 second_state=0
 _mole_user_cache_owner_process_state "com.example.Second" || second_state=$?
 call_count=$(wc -l < "$ps_calls" | tr -d ' ')
-rm -f "$ps_calls"
+command rm -f "$ps_calls"
 printf 'FIRST=%s SECOND=%s CALLS=%s STATE=%s\n' \
 	"$first_state" "$second_state" "$call_count" "$_MOLE_PROCESS_TABLE_STATE"
 EOF
 
 	[ "$status" -eq 0 ] || return 1
 	[[ "$output" == "FIRST=0 SECOND=1 CALLS=1 STATE=ok" ]] || return 1
+}
+
+@test "safe_remove refreshes process evidence at the final deletion boundary" {
+	local cache_dir="$HOME/Library/Caches/com.example.LateHelper"
+	local target_file="$cache_dir/Cache.db"
+	mkdir -p "$cache_dir"
+	touch "$target_file"
+
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" TARGET_FILE="$target_file" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+ps_calls=$(mktemp)
+ps() {
+	printf 'call\n' >> "$ps_calls"
+	call_count=$(wc -l < "$ps_calls" | tr -d ' ')
+	if [[ $call_count -eq 1 ]]; then
+		cat <<'TABLE'
+  PID  PPID COMM             ARGS
+TABLE
+	else
+		cat <<'TABLE'
+  PID  PPID COMM             ARGS
+  901     1 /Applications/Example.app/Contents/MacOS/LateHelper /Applications/Example.app/Contents/MacOS/LateHelper com.example.LateHelper
+TABLE
+	fi
+}
+lsof() { return 1; }
+get_path_size_kb() { printf '1\n'; }
+oplog_enabled() { return 0; }
+rm() { printf 'UNEXPECTED_REMOVE\n'; return 99; }
+
+remove_rc=0
+safe_remove "$TARGET_FILE" true || remove_rc=$?
+call_count=$(wc -l < "$ps_calls" | tr -d ' ')
+command rm -f "$ps_calls"
+printf 'RC=%s CALLS=%s EXISTS=%s\n' \
+	"$remove_rc" "$call_count" "$(test -f "$TARGET_FILE" && echo yes || echo no)"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "RC=1 CALLS=2 EXISTS=yes" ]] || return 1
 }
 
 # Mole's own size probe runs `du` over the very directory it is judging, so the
