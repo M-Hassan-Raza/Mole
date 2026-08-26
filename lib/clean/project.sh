@@ -388,12 +388,12 @@ is_php_project_root() {
 
 # Decide whether a "bin" directory is a .NET directory
 is_dotnet_bin_dir() {
-    local path="$1"
-    [[ "$(basename "$path")" == "bin" ]] || return 1
+    local path="${1%/}"
+    [[ "${path##*/}" == "bin" ]] || return 1
 
     # Check if parent directory has a .csproj/.fsproj/.vbproj file
-    local parent_dir
-    parent_dir="$(dirname "$path")"
+    local parent_dir="${path%/*}"
+    [[ -n "$parent_dir" ]] || parent_dir="/"
     find "$parent_dir" -maxdepth 1 \( -name "*.csproj" -o -name "*.fsproj" -o -name "*.vbproj" \) 2> /dev/null | grep -q . || return 1
 
     # Check if bin directory contains Debug/ or Release/ subdirectories
@@ -406,12 +406,11 @@ is_dotnet_bin_dir() {
 # Expects path to be a vendor directory (basename == vendor)
 # Strategy: Only clean PHP Composer vendor, protect all others
 is_protected_vendor_dir() {
-    local path="$1"
-    local base
-    base=$(basename "$path")
+    local path="${1%/}"
+    local base="${path##*/}"
     [[ "$base" == "vendor" ]] || return 1
-    local parent_dir
-    parent_dir=$(dirname "$path")
+    local parent_dir="${path%/*}"
+    [[ -n "$parent_dir" ]] || parent_dir="/"
 
     # PHP Composer vendor can be safely regenerated with 'composer install'
     # Do NOT protect it (return 1 = not protected = can be cleaned)
@@ -435,9 +434,8 @@ is_protected_vendor_dir() {
 
 # Check if an artifact should be protected from purge
 is_protected_purge_artifact() {
-    local path="$1"
-    local base
-    base=$(basename "$path")
+    local path="${1%/}"
+    local base="${path##*/}"
 
     case "$base" in
         bin)

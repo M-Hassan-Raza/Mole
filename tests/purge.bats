@@ -790,6 +790,20 @@ EOF
 	[[ "$result" == "NOT_PROTECTED" ]]
 }
 
+@test "is_protected_purge_artifact avoids basename and dirname subprocesses" {
+	mkdir -p "$HOME/dotnet-app/bin/Debug"
+
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/clean/project.sh"
+basename() { return 99; }
+dirname() { return 99; }
+is_protected_purge_artifact "$HOME/dotnet-app/bin"
+EOF
+
+	[ "$status" -eq 0 ]
+}
+
 # Integration tests
 @test "scan_purge_targets: skips Rails vendor directory" {
 	mkdir -p "$HOME/www/rails-app/vendor/javascript"
