@@ -445,7 +445,7 @@ clean_python_bytecode_cache_group() {
             dry_run_paths+=("$cache_dir")
             dry_run_sizes+=("$size_kb")
         else
-            if ! safe_remove "$cache_dir" true; then
+            if ! safe_remove "$cache_dir" true "$size_kb"; then
                 continue
             fi
         fi

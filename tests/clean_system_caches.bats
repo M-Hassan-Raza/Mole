@@ -370,7 +370,28 @@ EOF
     [[ "$output" == *"Python bytecode cache"* ]] || return 1
     [[ "$output" == *"1 dirs"* ]] || return 1
 
-    rm -rf "$HOME/Projects"
+	rm -rf "$HOME/Projects"
+}
+
+@test "clean_python_bytecode_cache_group reuses its exact size at removal" {
+	local cache_dir="$HOME/Projects/python-app/pkg/__pycache__"
+	mkdir -p "$cache_dir"
+	touch "$cache_dir/module.pyc"
+
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" CACHE_DIR="$cache_dir" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/caches.sh"
+DRY_RUN=false
+get_path_size_kb() { printf '321\n'; }
+should_protect_path() { return 1; }
+is_path_whitelisted() { return 1; }
+safe_remove() { printf 'REMOVE=%s SILENT=%s SIZE=%s\n' "$1" "$2" "$3"; }
+clean_python_bytecode_cache_group "$HOME/Projects/python-app" "$CACHE_DIR"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == *"REMOVE=$cache_dir SILENT=true SIZE=321"* ]] || return 1
 }
 
 @test "pycache_has_bytecode checks direct bytecode files without spawning find" {
