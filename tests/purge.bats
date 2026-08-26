@@ -167,6 +167,43 @@ EOF
 	[[ "$result" == "BLOCKED" ]]
 }
 
+@test "is_safe_configured_purge_artifact checks a lexical owner before unrelated roots" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/clean/project.sh"
+PURGE_SEARCH_PATHS=("$HOME/unrelated" "$HOME/projects")
+is_safe_project_artifact() {
+	printf '%s\n' "$2" >> "$HOME/safety-roots"
+	[[ "$2" == "$HOME/projects" ]]
+}
+is_safe_configured_purge_artifact "$HOME/projects/app/node_modules"
+printf 'CALLS=%s ROOT=%s\n' \
+	"$(wc -l < "$HOME/safety-roots" | tr -d ' ')" \
+	"$(cat "$HOME/safety-roots")"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "CALLS=1 ROOT=$HOME/projects" ]] || return 1
+}
+
+@test "is_safe_configured_purge_artifact preserves physical alias fallback" {
+	mkdir -p "$HOME/www/real/proj/node_modules"
+	touch "$HOME/www/real/proj/package.json"
+	ln -s "$HOME/www/real" "$HOME/www/link"
+
+	result=$(/bin/bash -c "
+        source '$PROJECT_ROOT/lib/clean/project.sh'
+        PURGE_SEARCH_PATHS=('$HOME/www/link/proj')
+        if is_safe_configured_purge_artifact '$HOME/www/real/proj/node_modules'; then
+            echo 'ALLOWED'
+        else
+            echo 'BLOCKED'
+        fi
+    ")
+
+	[[ "$result" == "ALLOWED" ]]
+}
+
 @test "compact_purge_scan_path keeps the tail of long purge paths visible" {
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SKIP_MAIN=1 /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
@@ -1551,6 +1588,92 @@ EOF
 	[[ "$output" != *"REMOVE:$HOME/dev/failed-project/node_modules"* ]] || return 1
 }
 
+@test "clean_project_artifacts preserves nested candidates merged from overlapping roots" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/project.sh"
+
+outer_root="$HOME/projects"
+inner_root="$outer_root/app"
+parent_artifact="$inner_root/node_modules"
+nested_artifact="$parent_artifact/package/.cache"
+mkdir -p "$nested_artifact" "$HOME/.cache/mole"
+touch "$inner_root/package.json"
+PURGE_SEARCH_PATHS=("$outer_root" "$inner_root")
+get_optimal_parallel_jobs() { echo 1; }
+scan_purge_targets() {
+	if [[ "$1" == "$outer_root" ]]; then
+		printf '%s\n' "$parent_artifact" > "$2"
+	else
+		printf '%s\n' "$nested_artifact" > "$2"
+	fi
+}
+get_dir_size_kb() { echo 4; }
+is_recently_modified() {
+	_PURGE_ACTIVITY_STATE=old
+	return 1
+}
+purge_target_activity_still_safe() { return 0; }
+safe_remove() { printf 'REMOVE:%s\n' "$1"; }
+
+export MOLE_DRY_RUN=1
+clean_project_artifacts </dev/null
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == *"REMOVE:$HOME/projects/app/node_modules"* ]] || return 1
+	[[ "$output" == *"REMOVE:$HOME/projects/app/node_modules/package/.cache"* ]] || return 1
+}
+
+@test "clean_project_artifacts binds candidates without probing unrelated roots" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/project.sh"
+
+unrelated_root="$HOME/unrelated"
+owner_root="$HOME/projects"
+artifact="$owner_root/app/node_modules"
+mkdir -p "$unrelated_root" "$artifact" "$HOME/.cache/mole"
+touch "$owner_root/app/package.json"
+PURGE_SEARCH_PATHS=("$unrelated_root" "$owner_root")
+get_optimal_parallel_jobs() { echo 1; }
+scan_purge_targets() {
+	: > "$2"
+	if [[ "$1" == "$owner_root" ]]; then
+		printf '%s\n' "$artifact" > "$2"
+	fi
+	return 0
+}
+is_safe_project_artifact_under_root() {
+	printf '%s\n' "$2" >> "$HOME/safety-roots"
+	[[ "$2" == "$owner_root" ]]
+}
+get_dir_size_kb() { echo 4; }
+is_recently_modified() {
+	_PURGE_ACTIVITY_STATE=old
+	return 1
+}
+purge_target_activity_still_safe() { return 0; }
+safe_remove() { return 0; }
+
+export MOLE_DRY_RUN=1
+clean_project_artifacts </dev/null
+if grep -Fx "$unrelated_root" "$HOME/safety-roots"; then
+	printf 'UNRELATED_PROBED\n'
+	exit 1
+fi
+owner_calls=$(grep -Fxc "$owner_root" "$HOME/safety-roots")
+printf 'OWNER_CALLS=%s\n' "$owner_calls"
+[[ "$owner_calls" -ge 1 && "$owner_calls" -le 4 ]]
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == *"OWNER_CALLS="* ]] || return 1
+	[[ "$output" != *"UNRELATED_PROBED"* ]] || return 1
+}
+
 @test "clean_project_artifacts: bounds concurrent root scans" {
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
@@ -1850,6 +1973,48 @@ EOF
 	[ "$status" -eq 0 ] || return 1
 }
 
+@test "clean_project_artifacts rejects results when a symlink root target is replaced" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/project.sh"
+
+configured_root="$HOME/www"
+physical_root="$HOME/www-target"
+original_root="$HOME/www-original"
+artifact="$configured_root/project/node_modules"
+mkdir -p "$physical_root/project/node_modules" "$HOME/.cache/mole"
+touch "$physical_root/project/package.json"
+/bin/rmdir "$configured_root"
+ln -s "$physical_root" "$configured_root"
+
+PURGE_SEARCH_PATHS=("$configured_root")
+scan_purge_targets() {
+	printf '%s\n' "$artifact" > "$2"
+	mv "$physical_root" "$original_root"
+	mkdir -p "$physical_root/project/node_modules"
+	touch "$physical_root/project/package.json"
+}
+safe_remove() {
+	printf 'UNEXPECTED_REMOVE:%s\n' "$1"
+	return 1
+}
+
+clean_project_artifacts </dev/null
+
+[[ -L "$configured_root" ]] || exit 1
+[[ -d "$original_root/project/node_modules" ]] || exit 1
+[[ -d "$physical_root/project/node_modules" ]] || exit 1
+/bin/rm "$configured_root"
+mv "$physical_root" "$configured_root"
+/bin/rm -rf "$original_root"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == *"Skipped 1 project scan root because scanning did not complete"* ]] || return 1
+	[[ "$output" != *"UNEXPECTED_REMOVE:"* ]] || return 1
+}
+
 @test "clean_project_artifacts refuses a replacement at the selected artifact leaf" {
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
@@ -1883,6 +2048,55 @@ clean_project_artifacts </dev/null
 EOF
 
 	[ "$status" -eq 0 ] || return 1
+}
+
+@test "clean_project_artifacts rechecks identity after the final activity probe" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/project.sh"
+
+configured_root="$HOME/www"
+artifact="$configured_root/project/node_modules"
+original_artifact="$configured_root/project/node_modules-original"
+replacement="$HOME/replacement-node-modules"
+mkdir -p "$artifact" "$replacement" "$HOME/.cache/mole"
+touch "$configured_root/project/package.json"
+
+PURGE_SEARCH_PATHS=("$configured_root")
+scan_purge_targets() { printf '%s\n' "$artifact" > "$2"; }
+get_dir_size_kb() { echo 1; }
+is_recently_modified() {
+	_PURGE_ACTIVITY_STATE=old
+	return 1
+}
+activity_calls=0
+purge_target_activity_still_safe() {
+	activity_calls=$((activity_calls + 1))
+	if [[ $activity_calls -eq 2 ]]; then
+		mv "$artifact" "$original_artifact"
+		mv "$replacement" "$artifact"
+	fi
+	return 0
+}
+rm() {
+	if [[ "$*" == *"$artifact"* ]]; then
+		printf 'TARGET_RM_REACHED:%s\n' "$*"
+		return 0
+	fi
+	command /bin/rm "$@"
+}
+
+clean_project_artifacts </dev/null
+
+printf 'ACTIVITY_CALLS=%s\n' "$activity_calls"
+[[ -d "$original_artifact" ]] || exit 1
+[[ -d "$artifact" ]] || exit 1
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == *"ACTIVITY_CALLS=2"* ]] || return 1
+	[[ "$output" != *"TARGET_RM_REACHED:"* ]] || return 1
 }
 
 @test "clean_project_artifacts: non-interactive dry-run shows cloud marker and preserves artifact" {
