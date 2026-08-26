@@ -954,14 +954,6 @@ safe_remove() {
         return 1
     fi
 
-    # Live reverse-DNS caches under ~/Library/Caches (#1390): refuse while the
-    # owning process is running or an open SQLite handle is proven. Final sink
-    # so both safe_clean and direct safe_remove callers are covered.
-    if _mole_should_refuse_live_user_cache_path "$path"; then
-        log_operation "${MOLE_CURRENT_COMMAND:-clean}" "SKIPPED" "$path" "live user cache"
-        return 1
-    fi
-
     # Dry-run mode: log but don't delete
     if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
         local dry_record_rc=0

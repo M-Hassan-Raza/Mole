@@ -636,6 +636,26 @@ SCRIPT
     [[ "$output" != *"UNEXPECTED_REGISTER"* ]]
 }
 
+@test "safe_remove dry-run performs one live-cache eligibility check" {
+    local target_dir="$TEST_DIR/cache-eligibility"
+    mkdir -p "$target_dir"
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" TARGET_DIR="$target_dir" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+guard_calls=0
+_mole_should_refuse_live_user_cache_path() {
+    guard_calls=$((guard_calls + 1))
+    return 1
+}
+MOLE_DRY_RUN=1 safe_remove "$TARGET_DIR" true 1
+printf 'CALLS=%s EXISTS=%s\n' "$guard_calls" "$(test -d "$TARGET_DIR" && echo yes || echo no)"
+EOF
+
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == "CALLS=1 EXISTS=yes" ]] || return 1
+}
+
 @test "safe_remove in silent mode suppresses error output" {
     run /bin/bash -c "source '$PROJECT_ROOT/lib/core/common.sh'; safe_remove '/System/test' true 2>&1"
     [ "$status" -eq 1 ]
