@@ -1576,10 +1576,11 @@ is_recently_modified() {
 	return 1
 }
 get_dir_size_kb() {
-	touch "$HOME/size-worker-started"
-	trap 'exit 143' TERM
-	sleep 1
-	touch "$HOME/size-worker-survived"
+	/bin/sh -c 'printf "%s\n" "$PPID" > "$1"' _ "$HOME/size-worker-pid"
+	trap 'touch "$HOME/size-worker-terminated"; exit 143' TERM
+	while [[ ! -e "$HOME/release-size-worker" ]]; do
+		sleep 0.05
+	done
 	printf '1\n'
 }
 safe_remove() { return 0; }
@@ -1592,20 +1593,39 @@ set -euo pipefail
 /bin/bash "$DRIVER" &
 parent_pid=$!
 for _ in {1..100}; do
-	[[ -e "$HOME/size-worker-started" ]] && break
-	sleep 0.02
+	[[ -s "$HOME/size-worker-pid" ]] && break
+	sleep 0.05
 done
-[[ -e "$HOME/size-worker-started" ]] || exit 1
+[[ -s "$HOME/size-worker-pid" ]] || exit 1
+worker_pid=$(< "$HOME/size-worker-pid")
+(
+	sleep 10
+	touch "$HOME/size-watchdog-fired"
+	kill -KILL "$parent_pid" "$worker_pid" 2> /dev/null || true
+) &
+watchdog_pid=$!
 kill -TERM "$parent_pid"
 parent_rc=0
 wait "$parent_pid" || parent_rc=$?
-sleep 0.1
-printf 'PARENT_RC=%s WORKER_SURVIVED=%s\n' \
-	"$parent_rc" "$([[ -e "$HOME/size-worker-survived" ]] && printf yes || printf no)"
+kill "$watchdog_pid" 2> /dev/null || true
+wait "$watchdog_pid" 2> /dev/null || true
+worker_alive=no
+if kill -0 "$worker_pid" 2> /dev/null; then
+	worker_alive=yes
+	touch "$HOME/release-size-worker"
+	kill -TERM "$worker_pid" 2> /dev/null || true
+fi
+printf 'PARENT_RC=%s WORKER_ALIVE=%s WORKER_TERMINATED=%s WATCHDOG=%s\n' \
+	"$parent_rc" "$worker_alive" \
+	"$([[ -e "$HOME/size-worker-terminated" ]] && printf yes || printf no)" \
+	"$([[ -e "$HOME/size-watchdog-fired" ]] && printf yes || printf no)"
 EOF
 
 	[ "$status" -eq 0 ] || return 1
-	[[ "$output" == "PARENT_RC=143 WORKER_SURVIVED=no" ]] || return 1
+	[[ "$output" == "PARENT_RC=143 WORKER_ALIVE=no WORKER_TERMINATED=yes WATCHDOG=no" ]] || {
+		echo "$output"
+		return 1
+	}
 }
 
 @test "clean_project_artifacts: restores caller INT/TERM traps" {
