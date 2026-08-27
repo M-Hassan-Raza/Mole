@@ -1289,14 +1289,58 @@ _mole_timeout_with_deadline() {
 scan_status=0
 scan_purge_targets "$HOME/www" "$SCAN_OUTPUT" || scan_status=$?
 printf 'STATUS=%s CALLS=%s\n' "$scan_status" "$(cat "$HOME/deadline-calls")"
-[[ "$scan_status" -eq 124 ]]
-[[ ! -s "$SCAN_OUTPUT" ]]
-[[ ! -e "$HOME/find-called" ]]
+[[ "$scan_status" -eq 124 ]] || exit 1
+[[ ! -s "$SCAN_OUTPUT" ]] || exit 1
+[[ ! -e "$HOME/find-called" ]] || exit 1
 EOF
 
 	rm -f "$scan_output"
 	[ "$status" -eq 0 ] || return 1
 	[[ "$output" == "STATUS=124 CALLS=3" ]] || return 1
+}
+
+@test "scan_purge_targets: bounds nested filtering within the shared deadline" {
+	mkdir -p "$HOME/.config/mole" "$HOME/www/test-project/node_modules"
+	printf '%s\n' "$HOME/www" > "$HOME/.config/mole/purge_paths"
+
+	local mock_bin="$HOME/mock-slow-nested-filter"
+	mkdir -p "$mock_bin"
+	cat > "$mock_bin/find" <<'EOF'
+#!/bin/bash
+args=" $* "
+if [[ "$args" != *" -type f "* ]]; then
+	printf '%s\n' "$HOME/www/test-project/node_modules"
+fi
+EOF
+	chmod +x "$mock_bin/find"
+	cat > "$mock_bin/sort" <<'EOF'
+#!/bin/bash
+sleep 4
+/usr/bin/sort "$@"
+EOF
+	chmod +x "$mock_bin/sort"
+
+	local scan_output
+	scan_output="$(mktemp)"
+
+	run env HOME="$HOME" PATH="$mock_bin:$PATH" PROJECT_ROOT="$PROJECT_ROOT" SCAN_OUTPUT="$scan_output" \
+		MO_USE_FIND=1 MO_PURGE_SCAN_TIMEOUT_SEC=2 /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/clean/project.sh"
+SECONDS=0
+scan_status=0
+scan_purge_targets "$HOME/www" "$SCAN_OUTPUT" || scan_status=$?
+printf 'STATUS=%s ELAPSED=%s BYTES=%s\n' \
+	"$scan_status" "$SECONDS" "$(wc -c < "$SCAN_OUTPUT" | tr -d ' ')"
+EOF
+
+	rm -f "$scan_output"
+	[ "$status" -eq 0 ] || return 1
+	local elapsed
+	elapsed=$(printf '%s\n' "$output" | sed -n 's/.*ELAPSED=\([0-9][0-9]*\).*/\1/p')
+	[[ "$output" == STATUS=124*" BYTES=0" ]] || return 1
+	[[ "$elapsed" =~ ^[0-9]+$ ]] || return 1
+	((elapsed < 4))
 }
 
 @test "is_recently_modified: detects recent projects" {
@@ -1499,6 +1543,71 @@ EOF
 	[[ "$output" == "TIMEOUT" ]] || return 1
 }
 
+@test "purge size pass preserves a fractional timeout override" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/project.sh"
+printf 'BUDGET=%s\n' "$(_mole_purge_size_budget_seconds 2.5)"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "BUDGET=3" ]] || return 1
+}
+
+@test "purge size pass kills active workers when its parent receives TERM" {
+	local purge_home="$HOME/terminated-purge-sizes"
+	local artifact="$purge_home/www/app/node_modules"
+	mkdir -p "$artifact" "$purge_home/.cache/mole"
+	touch "$purge_home/www/app/package.json"
+	local driver="$purge_home/driver.sh"
+
+	cat > "$driver" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/project.sh"
+artifact="$HOME/www/app/node_modules"
+PURGE_SEARCH_PATHS=("$HOME/www")
+get_optimal_parallel_jobs() { printf '1\n'; }
+scan_purge_targets() { printf '%s\n' "$artifact" > "$2"; }
+is_recently_modified() {
+	_PURGE_ACTIVITY_STATE=old
+	return 1
+}
+get_dir_size_kb() {
+	touch "$HOME/size-worker-started"
+	trap 'exit 143' TERM
+	sleep 1
+	touch "$HOME/size-worker-survived"
+	printf '1\n'
+}
+safe_remove() { return 0; }
+MOLE_DRY_RUN=1 clean_project_artifacts </dev/null
+EOF
+	chmod +x "$driver"
+
+	run env HOME="$purge_home" PROJECT_ROOT="$PROJECT_ROOT" DRIVER="$driver" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+/bin/bash "$DRIVER" &
+parent_pid=$!
+for _ in {1..100}; do
+	[[ -e "$HOME/size-worker-started" ]] && break
+	sleep 0.02
+done
+[[ -e "$HOME/size-worker-started" ]] || exit 1
+kill -TERM "$parent_pid"
+parent_rc=0
+wait "$parent_pid" || parent_rc=$?
+sleep 0.1
+printf 'PARENT_RC=%s WORKER_SURVIVED=%s\n' \
+	"$parent_rc" "$([[ -e "$HOME/size-worker-survived" ]] && printf yes || printf no)"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "PARENT_RC=143 WORKER_SURVIVED=no" ]] || return 1
+}
+
 @test "clean_project_artifacts: restores caller INT/TERM traps" {
 	result=$(/bin/bash -c "
         set -euo pipefail
@@ -1586,6 +1695,34 @@ EOF
 	[[ "$output" == *"(status 7)"* ]] || return 1
 	[[ "$output" == *"REMOVE:$HOME/www/good-project/node_modules"* ]] || return 1
 	[[ "$output" != *"REMOVE:$HOME/dev/failed-project/node_modules"* ]] || return 1
+}
+
+@test "clean_project_artifacts stops launching roots after an interrupted scan" {
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/project.sh"
+
+first_root="$HOME/root-1"
+second_root="$HOME/root-2"
+third_root="$HOME/root-3"
+mkdir -p "$first_root" "$second_root" "$third_root" "$HOME/.cache/mole"
+PURGE_SEARCH_PATHS=("$first_root" "$second_root" "$third_root")
+get_optimal_parallel_jobs() { printf '1\n'; }
+scan_purge_targets() {
+	: > "$2"
+	printf '%s\n' "${1##*/}" >> "$HOME/scanned-roots"
+	[[ "$1" == "$first_root" ]] && return 130
+	return 0
+}
+
+clean_rc=0
+clean_project_artifacts </dev/null || clean_rc=$?
+printf 'RC=%s SCANNED=%s\n' "$clean_rc" "$(paste -sd, "$HOME/scanned-roots")"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "RC=130 SCANNED=root-1" ]] || return 1
 }
 
 @test "clean_project_artifacts preserves nested candidates merged from overlapping roots" {
@@ -2071,6 +2208,7 @@ is_recently_modified() {
 	return 1
 }
 activity_calls=0
+rm_trace="$HOME/target-rm-reached"
 purge_target_activity_still_safe() {
 	activity_calls=$((activity_calls + 1))
 	if [[ $activity_calls -eq 2 ]]; then
@@ -2081,7 +2219,7 @@ purge_target_activity_still_safe() {
 }
 rm() {
 	if [[ "$*" == *"$artifact"* ]]; then
-		printf 'TARGET_RM_REACHED:%s\n' "$*"
+		printf 'TARGET_RM_REACHED:%s\n' "$*" > "$rm_trace"
 		return 0
 	fi
 	command /bin/rm "$@"
@@ -2092,11 +2230,11 @@ clean_project_artifacts </dev/null
 printf 'ACTIVITY_CALLS=%s\n' "$activity_calls"
 [[ -d "$original_artifact" ]] || exit 1
 [[ -d "$artifact" ]] || exit 1
+[[ ! -e "$rm_trace" ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ] || return 1
 	[[ "$output" == *"ACTIVITY_CALLS=2"* ]] || return 1
-	[[ "$output" != *"TARGET_RM_REACHED:"* ]] || return 1
 }
 
 @test "clean_project_artifacts: non-interactive dry-run shows cloud marker and preserves artifact" {

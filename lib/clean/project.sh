@@ -538,7 +538,12 @@ scan_purge_targets() {
         local deadline="$2"
         if [[ -f "$input_file" ]]; then
             local process_status=0
-            filter_nested_artifacts < "$input_file" |
+            local nested_filter_timeout=""
+            nested_filter_timeout=$(_mole_timeout_with_deadline "$scan_timeout" "$deadline") || process_status=$?
+            if [[ $process_status -ne 0 ]]; then
+                return "$process_status"
+            fi
+            filter_nested_artifacts "$nested_filter_timeout" < "$input_file" |
                 (
                     while IFS= read -r item; do
                         if [[ $SECONDS -ge $deadline ]]; then
@@ -708,11 +713,9 @@ scan_purge_targets() {
 # Filter out nested artifacts (e.g. node_modules inside node_modules, .build inside build).
 # Optimized: Sort paths to put parents before children, then filter in single pass.
 filter_nested_artifacts() {
-    # 1. Append trailing slash to each path (to ensure /foo/bar starts with /foo/)
-    # 2. Sort to group parents and children (LC_COLLATE=C ensures standard sorting)
-    # 3. Use awk to filter out paths that start with the previous kept path
-    # 4. Remove trailing slash
-    sed 's|[^/]$|&/|' | LC_COLLATE=C sort | awk '
+    local timeout_seconds="${1:-}"
+    # shellcheck disable=SC2016 # Awk expands its own variables.
+    local nested_filter_program='
         BEGIN { last_kept = "" }
         {
             current = $0
@@ -723,7 +726,26 @@ filter_nested_artifacts() {
                 last_kept = current
             }
         }
-    ' | sed 's|/$||'
+    '
+    # shellcheck disable=SC2016 # The child shell expands its own positional parameters.
+    local -a filter_command=(
+        /bin/bash -o pipefail -c
+        'sed "$1" | LC_COLLATE=C sort | awk "$2" | sed "$3"'
+        _
+        's|[^/]$|&/|'
+        "$nested_filter_program"
+        's|/$||'
+    )
+
+    # 1. Append trailing slash to each path (to ensure /foo/bar starts with /foo/)
+    # 2. Sort to group parents and children (LC_COLLATE=C ensures standard sorting)
+    # 3. Use awk to filter out paths that start with the previous kept path
+    # 4. Remove trailing slash
+    if [[ -n "$timeout_seconds" ]]; then
+        run_with_timeout "$timeout_seconds" "${filter_command[@]}"
+    else
+        "${filter_command[@]}"
+    fi
 }
 
 filter_protected_artifacts() {
@@ -920,6 +942,10 @@ get_dir_size_kb() {
         debug_log "Size calculation returned invalid output: $path"
         echo "ERROR"
     fi
+}
+
+_mole_purge_size_budget_seconds() {
+    mole_purge_timeout_budget_seconds "${1:-$MOLE_TIMEOUT_DISK_VERIFY_SEC}" 30
 }
 
 # Resolve the owning project for a purge artifact. Monorepo indicators take
@@ -1464,6 +1490,10 @@ clean_project_artifacts() {
         for pid in "${scan_pids[@]+"${scan_pids[@]}"}"; do
             kill "$pid" 2> /dev/null || true
         done
+        for pid in "${scan_pids[@]+"${scan_pids[@]}"}"; do
+            wait "$pid" 2> /dev/null || true
+        done
+        scan_pids=()
         # Clean up temp files
         for temp in "${scan_temps[@]+"${scan_temps[@]}"}"; do
             rm -f "$temp" "${temp}.targets" "${temp}.tags" "${temp}.processed" 2> /dev/null || true
@@ -1479,6 +1509,19 @@ clean_project_artifacts() {
     previous_term_trap=$(trap -p TERM || true)
     trap cleanup_scan INT TERM
     trap_installed_by_this_call=true
+    _restore_purge_scan_traps() {
+        [[ "$trap_installed_by_this_call" == "true" ]] || return 0
+        trap - INT TERM
+        trap_installed_by_this_call=false
+        local saved_int_trap="$previous_int_trap"
+        local saved_term_trap="$previous_term_trap"
+        previous_int_trap=""
+        previous_term_trap=""
+        # eval: restore caller traps captured by $(trap -p)
+        [[ -n "$saved_int_trap" ]] && eval "$saved_int_trap"
+        [[ -n "$saved_term_trap" ]] && eval "$saved_term_trap"
+        return 0
+    }
     local -a scan_statuses=()
     local -a scan_root_parents=()
     local -a scan_root_parent_ids=()
@@ -1490,6 +1533,7 @@ clean_project_artifacts() {
     local -a failed_scan_roots=()
     local -a failed_scan_statuses=()
     local failed_scan_count=0
+    local scan_interrupt_status=0
     local max_scan_jobs
     max_scan_jobs=$(get_optimal_parallel_jobs io)
     if ! [[ "$max_scan_jobs" =~ ^[0-9]+$ ]] || [[ "$max_scan_jobs" -lt 1 ]]; then
@@ -1499,8 +1543,9 @@ clean_project_artifacts() {
     fi
 
     _wait_for_purge_scan_batch() {
-        local pid
-        for pid in "${scan_pids[@]+"${scan_pids[@]}"}"; do
+        local scan_index pid
+        for ((scan_index = 0; scan_index < ${#scan_pids[@]}; scan_index++)); do
+            pid="${scan_pids[$scan_index]}"
             local scan_status=0
             if wait "$pid" 2> /dev/null; then
                 scan_status=0
@@ -1508,6 +1553,17 @@ clean_project_artifacts() {
                 scan_status=$?
             fi
             scan_statuses+=("$scan_status")
+            if [[ $scan_status -ge 128 ]]; then
+                local remaining_index
+                for ((remaining_index = scan_index + 1; remaining_index < ${#scan_pids[@]}; remaining_index++)); do
+                    kill "${scan_pids[$remaining_index]}" 2> /dev/null || true
+                done
+                for ((remaining_index = scan_index + 1; remaining_index < ${#scan_pids[@]}; remaining_index++)); do
+                    wait "${scan_pids[$remaining_index]}" 2> /dev/null || true
+                done
+                scan_pids=()
+                return "$scan_status"
+            fi
         done
         scan_pids=()
     }
@@ -1516,6 +1572,7 @@ clean_project_artifacts() {
     # Keep root-level concurrency bounded because each fd scan has its own
     # worker pool. Batches preserve launch-order alignment with scan_statuses.
     for path in "${PURGE_SEARCH_PATHS[@]}"; do
+        [[ $scan_interrupt_status -ge 128 ]] && break
         if [[ -d "$path" ]]; then
             if ! _mole_snapshot_path_identity "$path"; then
                 failed_scan_count=$((failed_scan_count + 1))
@@ -1558,11 +1615,29 @@ clean_project_artifacts() {
             local scan_pid=$!
             scan_pids+=("$scan_pid")
             if [[ ${#scan_pids[@]} -ge $max_scan_jobs ]]; then
-                _wait_for_purge_scan_batch
+                _wait_for_purge_scan_batch || scan_interrupt_status=$?
+                [[ $scan_interrupt_status -ge 128 ]] && break
             fi
         fi
     done
-    _wait_for_purge_scan_batch
+    if [[ $scan_interrupt_status -lt 128 ]]; then
+        _wait_for_purge_scan_batch || scan_interrupt_status=$?
+    fi
+
+    if [[ $scan_interrupt_status -ge 128 ]]; then
+        local interrupted_stats_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mole"
+        rm -f "$interrupted_stats_dir/purge_scanning" 2> /dev/null || true
+        local interrupted_temp
+        for interrupted_temp in "${scan_temps[@]+"${scan_temps[@]}"}"; do
+            rm -f "$interrupted_temp" "${interrupted_temp}.targets" \
+                "${interrupted_temp}.tags" "${interrupted_temp}.processed" 2> /dev/null || true
+        done
+        _restore_purge_scan_traps
+        if [[ -t 1 ]]; then
+            stop_inline_spinner
+        fi
+        return "$scan_interrupt_status"
+    fi
 
     # Stop the scanning monitor (removes purge_scanning file to signal completion)
     local stats_dir="${XDG_CACHE_HOME:-$HOME/.cache}/mole"
@@ -1628,12 +1703,7 @@ clean_project_artifacts() {
     fi
     rm -f "$dedupe_output"
     # Restore caller traps after this function completes.
-    if [[ "$trap_installed_by_this_call" == "true" ]]; then
-        trap - INT TERM
-        # eval: restore caller traps captured by $(trap -p)
-        [[ -n "$previous_int_trap" ]] && eval "$previous_int_trap"
-        [[ -n "$previous_term_trap" ]] && eval "$previous_term_trap"
-    fi
+    _restore_purge_scan_traps
     if [[ $failed_scan_count -gt 0 ]]; then
         local root_text="root"
         [[ $failed_scan_count -ne 1 ]] && root_text="roots"
@@ -1778,10 +1848,8 @@ clean_project_artifacts() {
     # filesystem cache, making du timeout and display "unknown" sizes.
     local -a _size_tmpfiles=()
     local -a _size_pids=()
-    local _size_total_timeout="$MOLE_TIMEOUT_DISK_VERIFY_SEC"
-    if [[ ! "$_size_total_timeout" =~ ^([2-9]|[1-9][0-9]+)$ ]]; then
-        _size_total_timeout=30
-    fi
+    local _size_total_timeout
+    _size_total_timeout=$(_mole_purge_size_budget_seconds "$MOLE_TIMEOUT_DISK_VERIFY_SEC")
     local _size_deadline=$((SECONDS + _size_total_timeout))
     local _max_size_jobs
     _max_size_jobs=$(get_optimal_parallel_jobs io)
@@ -1815,7 +1883,51 @@ clean_project_artifacts() {
         fi
     }
 
+    local _size_previous_int_trap=""
+    local _size_previous_term_trap=""
+    local _size_interrupt_status=0
+    local _size_traps_installed=false
+    # shellcheck disable=SC2329 # Invoked by the signal trap below.
+    _cleanup_purge_size_workers() {
+        local size_pid
+        for size_pid in "${_size_pids[@]+"${_size_pids[@]}"}"; do
+            kill "$size_pid" 2> /dev/null || true
+        done
+        for size_pid in "${_size_pids[@]+"${_size_pids[@]}"}"; do
+            wait "$size_pid" 2> /dev/null || true
+        done
+        _size_pids=()
+    }
+    # shellcheck disable=SC2329 # Invoked by the signal trap below.
+    _handle_purge_size_interrupt() {
+        local interrupt_status="$1"
+        if [[ $_size_interrupt_status -lt 128 ]]; then
+            _size_interrupt_status="$interrupt_status"
+        fi
+        _cleanup_purge_size_workers
+    }
+    _restore_purge_size_traps() {
+        [[ "$_size_traps_installed" == "true" ]] || return 0
+        trap - INT TERM
+        _size_traps_installed=false
+        local saved_int_trap="$_size_previous_int_trap"
+        local saved_term_trap="$_size_previous_term_trap"
+        _size_previous_int_trap=""
+        _size_previous_term_trap=""
+        # eval: restore caller traps captured by $(trap -p)
+        [[ -n "$saved_int_trap" ]] && eval "$saved_int_trap"
+        [[ -n "$saved_term_trap" ]] && eval "$saved_term_trap"
+        return 0
+    }
+
+    _size_previous_int_trap=$(trap -p INT || true)
+    _size_previous_term_trap=$(trap -p TERM || true)
+    trap '_handle_purge_size_interrupt 130' INT
+    trap '_handle_purge_size_interrupt 143' TERM
+    _size_traps_installed=true
+
     for _sz_item in "${safe_to_clean[@]}"; do
+        [[ $_size_interrupt_status -ge 128 ]] && break
         local _stmp
         _stmp=$(mktemp)
         register_temp_file "$_stmp"
@@ -1829,11 +1941,27 @@ clean_project_artifacts() {
 
         if [[ ${#_size_pids[@]} -ge $_max_size_jobs ]]; then
             _reap_one_size_pid
+            [[ $_size_interrupt_status -ge 128 ]] && break
         fi
     done
-    for _spid in "${_size_pids[@]+"${_size_pids[@]}"}"; do
-        wait "$_spid" 2> /dev/null || true
-    done
+    if [[ $_size_interrupt_status -lt 128 ]]; then
+        for _spid in "${_size_pids[@]+"${_size_pids[@]}"}"; do
+            wait "$_spid" 2> /dev/null || true
+        done
+        _size_pids=()
+    fi
+    _restore_purge_size_traps
+
+    if [[ $_size_interrupt_status -ge 128 ]]; then
+        local interrupted_size_temp
+        for interrupted_size_temp in "${_size_tmpfiles[@]+"${_size_tmpfiles[@]}"}"; do
+            rm -f "$interrupted_size_temp" 2> /dev/null || true # SAFE: exact scratch file created by mktemp above
+        done
+        if [[ -t 1 ]]; then
+            stop_inline_spinner
+        fi
+        return "$_size_interrupt_status"
+    fi
 
     local -a menu_options=()
     local -a item_paths=()

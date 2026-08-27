@@ -577,6 +577,7 @@ scan_project_cache_root() {
 process_project_cache_matches() { :; }
 
 (
+	trap 'touch "$HOME/release-scans"' EXIT
 	for _ in {1..100}; do
 		active_count=$(command find "$HOME" -maxdepth 1 -name 'active-*' | wc -l | tr -d ' ')
 		if [[ "$active_count" -ge 2 ]]; then
@@ -715,6 +716,79 @@ EOF
 	[[ "$output" == "RC=130 PROCESSED=no" ]] || return 1
 }
 
+@test "clean_project_caches stops launching roots after an interrupted batch" {
+	local scan_home="$HOME/interrupted-project-scan-launch"
+	mkdir -p "$scan_home/root-1" "$scan_home/root-2" "$scan_home/root-3"
+
+	run env HOME="$scan_home" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/caches.sh"
+discover_project_cache_roots() {
+	printf '%s\n' "$HOME/root-1" "$HOME/root-2" "$HOME/root-3"
+}
+get_optimal_parallel_jobs() { printf '1\n'; }
+scan_project_cache_root() {
+	: > "$2"
+	printf '%s\n' "${1##*/}" >> "$HOME/scanned"
+	[[ "${1##*/}" == "root-1" ]] && return 130
+	return 0
+}
+process_project_cache_matches() { printf 'UNEXPECTED_PROCESS\n'; }
+clean_rc=0
+clean_project_caches || clean_rc=$?
+printf 'RC=%s SCANNED=%s\n' "$clean_rc" "$(paste -sd, "$HOME/scanned")"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "RC=130 SCANNED=root-1" ]] || return 1
+}
+
+@test "clean_project_caches kills active root scans when its parent receives TERM" {
+	local scan_home="$HOME/terminated-project-scans"
+	mkdir -p "$scan_home/root"
+	local driver="$scan_home/driver.sh"
+
+	cat > "$driver" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/caches.sh"
+discover_project_cache_roots() { printf '%s\n' "$HOME/root"; }
+get_optimal_parallel_jobs() { printf '1\n'; }
+scan_project_cache_root() {
+	: > "$2"
+	touch "$HOME/worker-started"
+	trap 'exit 143' TERM
+	sleep 1
+	touch "$HOME/worker-survived"
+}
+process_project_cache_matches() { :; }
+clean_project_caches
+EOF
+	chmod +x "$driver"
+
+	run env HOME="$scan_home" PROJECT_ROOT="$PROJECT_ROOT" DRIVER="$driver" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+/bin/bash "$DRIVER" &
+parent_pid=$!
+for _ in {1..100}; do
+	[[ -e "$HOME/worker-started" ]] && break
+	sleep 0.02
+done
+[[ -e "$HOME/worker-started" ]] || exit 1
+kill -TERM "$parent_pid"
+parent_rc=0
+wait "$parent_pid" || parent_rc=$?
+sleep 0.1
+printf 'PARENT_RC=%s WORKER_SURVIVED=%s\n' \
+	"$parent_rc" "$([[ -e "$HOME/worker-survived" ]] && printf yes || printf no)"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == "PARENT_RC=143 WORKER_SURVIVED=no" ]] || return 1
+}
+
 @test "scan_project_cache_root discards partial output when its producer times out" {
 	mkdir -p "$HOME/Projects/app/.next/cache"
 	touch "$HOME/Projects/app/package.json"
@@ -737,6 +811,45 @@ EOF
 	rm -rf "$HOME/Projects" "$output_file"
 	[ "$status" -eq 0 ] || return 1
 	[[ "$output" == "STATUS=124 SIZE=0" ]] || return 1
+}
+
+@test "scan_project_cache_root bounds grouping within the shared deadline" {
+	mkdir -p "$HOME/Projects"
+	local fake_bin
+	fake_bin="$(mktemp -d "$HOME/project-cache-postprocess.XXXXXX")"
+	cat > "$fake_bin/find" <<'EOF'
+#!/bin/bash
+for i in $(seq 1 1000); do
+	printf '%s\n' "$HOME/Projects/app-$i/.next"
+done
+EOF
+	cat > "$fake_bin/dirname" <<'EOF'
+#!/bin/bash
+sleep 0.02
+/usr/bin/dirname "$@"
+EOF
+	chmod +x "$fake_bin/find" "$fake_bin/dirname"
+	local output_file
+	output_file=$(mktemp)
+
+	run env HOME="$HOME" PATH="$fake_bin:$PATH" PROJECT_ROOT="$PROJECT_ROOT" OUTPUT_FILE="$output_file" \
+		MOLE_PROJECT_CACHE_SCAN_TIMEOUT=2 /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/clean/caches.sh"
+SECONDS=0
+scan_rc=0
+scan_project_cache_root "$HOME/Projects" "$OUTPUT_FILE" || scan_rc=$?
+printf 'STATUS=%s ELAPSED=%s BYTES=%s\n' \
+	"$scan_rc" "$SECONDS" "$(wc -c < "$OUTPUT_FILE" | tr -d ' ')"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	local elapsed
+	elapsed=$(printf '%s\n' "$output" | sed -n 's/.*ELAPSED=\([0-9][0-9]*\).*/\1/p')
+	[[ "$output" == STATUS=124*" BYTES=0" ]] || return 1
+	[[ "$elapsed" =~ ^[0-9]+$ ]] || return 1
+	((elapsed < 4))
 }
 
 @test "scan_project_cache_root prunes conda and site-packages" {

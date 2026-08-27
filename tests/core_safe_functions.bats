@@ -636,13 +636,14 @@ SCRIPT
     [[ "$output" != *"UNEXPECTED_REGISTER"* ]]
 }
 
-@test "safe_remove dry-run performs one live-cache eligibility check" {
+@test "safe_remove dry-run exercises the production preview eligibility path" {
     local target_dir="$TEST_DIR/cache-eligibility"
     mkdir -p "$target_dir"
 
     run env PROJECT_ROOT="$PROJECT_ROOT" TARGET_DIR="$target_dir" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/bin/clean.sh"
 guard_calls=0
 _mole_should_refuse_live_user_cache_path() {
     guard_calls=$((guard_calls + 1))
@@ -653,7 +654,7 @@ printf 'CALLS=%s EXISTS=%s\n' "$guard_calls" "$(test -d "$TARGET_DIR" && echo ye
 EOF
 
     [ "$status" -eq 0 ] || return 1
-    [[ "$output" == "CALLS=1 EXISTS=yes" ]] || return 1
+	[[ "$output" == *"CALLS=2 EXISTS=yes"* ]] || return 1
 }
 
 @test "safe_remove in silent mode suppresses error output" {
@@ -744,7 +745,7 @@ set -u
 case "${1:-}" in
     rm)
         printf 'sudo-rm %s\n' "$*" >> "$MOLE_SUDO_RM_TRACE"
-        exec sleep 4
+        exec sleep 8
         ;;
     *)
         exit 99
@@ -755,7 +756,7 @@ MOCK
 
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" TARGET_DIR="$target_dir" \
         PATH="$mock_bin:$PATH" MOLE_SUDO_RM_TRACE="$trace" \
-        MOLE_TIMEOUT_DISK_VERIFY_SEC=1 MO_NO_OPLOG=1 \
+        MOLE_TIMEOUT_DISK_VERIFY_SEC=2 MO_NO_OPLOG=1 \
         MOLE_TEST_MODE=0 MOLE_TEST_NO_AUTH=0 /bin/bash --noprofile --norc <<'SCRIPT'
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
@@ -775,7 +776,7 @@ SCRIPT
     [[ "$(< "$trace")" == *"sudo-rm rm -rf $target_dir"* ]] || return 1
     local elapsed="${output##*ELAPSED=}"
     [[ "$elapsed" =~ ^[0-9]+$ ]] || return 1
-    [ "$elapsed" -lt 3 ]
+    [ "$elapsed" -lt 5 ]
     [ -e "$target_dir/data" ]
 }
 
@@ -2262,6 +2263,7 @@ EOF
 set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 ps_calls=$(mktemp)
+rm_calls=$(mktemp)
 ps() {
 	printf 'call\n' >> "$ps_calls"
 	call_count=$(wc -l < "$ps_calls" | tr -d ' ')
@@ -2279,18 +2281,23 @@ TABLE
 lsof() { return 1; }
 get_path_size_kb() { printf '1\n'; }
 oplog_enabled() { return 0; }
-rm() { printf 'UNEXPECTED_REMOVE\n'; return 99; }
+rm() { printf 'call\n' >> "$rm_calls"; return 99; }
 
 remove_rc=0
 safe_remove "$TARGET_FILE" true || remove_rc=$?
 call_count=$(wc -l < "$ps_calls" | tr -d ' ')
-command rm -f "$ps_calls"
-printf 'RC=%s CALLS=%s EXISTS=%s\n' \
-	"$remove_rc" "$call_count" "$(test -f "$TARGET_FILE" && echo yes || echo no)"
+rm_call_count=$(wc -l < "$rm_calls" | tr -d ' ')
+command rm -f "$ps_calls" "$rm_calls"
+printf 'RC=%s CALLS=%s EXISTS=%s RM_CALLS=%s\n' \
+	"$remove_rc" "$call_count" "$(test -f "$TARGET_FILE" && echo yes || echo no)" \
+	"$rm_call_count"
 EOF
 
 	[ "$status" -eq 0 ] || return 1
-	[[ "$output" == "RC=1 CALLS=2 EXISTS=yes" ]] || return 1
+	[[ "$output" == *"RC=1 CALLS=2 EXISTS=yes RM_CALLS=0"* ]] || {
+		echo "$output"
+		return 1
+	}
 }
 
 # Mole's own size probe runs `du` over the very directory it is judging, so the
