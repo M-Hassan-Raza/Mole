@@ -1598,16 +1598,22 @@ for _ in {1..100}; do
 done
 [[ -s "$HOME/size-worker-pid" ]] || exit 1
 worker_pid=$(< "$HOME/size-worker-pid")
-(
-	sleep 10
-	touch "$HOME/size-watchdog-fired"
-	kill -KILL "$parent_pid" "$worker_pid" 2> /dev/null || true
-) &
+/usr/bin/perl -e '
+	my ($done, $fired, $parent, $worker) = @ARGV;
+	for (1 .. 10) {
+		exit 0 if -e $done;
+		sleep 1;
+	}
+	open my $marker, ">", $fired or exit 2;
+	close $marker;
+	kill 9, $parent, $worker;
+' "$HOME/size-parent-finished" "$HOME/size-watchdog-fired" \
+	"$parent_pid" "$worker_pid" &
 watchdog_pid=$!
 kill -TERM "$parent_pid"
 parent_rc=0
 wait "$parent_pid" || parent_rc=$?
-kill "$watchdog_pid" 2> /dev/null || true
+touch "$HOME/size-parent-finished"
 wait "$watchdog_pid" 2> /dev/null || true
 worker_alive=no
 if kill -0 "$worker_pid" 2> /dev/null; then
