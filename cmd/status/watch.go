@@ -46,6 +46,8 @@ func (s *watchState) collect(c *Collector) (MetricsSnapshot, error) {
 
 	if err == nil {
 		recordCollectionFreshness(mode, snap.CollectedAt, &s.lastFullAt, &s.lastProcessAt)
+	}
+	if !snap.CollectedAt.IsZero() {
 		s.ready = true
 	}
 	return snap, err
@@ -53,7 +55,7 @@ func (s *watchState) collect(c *Collector) (MetricsSnapshot, error) {
 
 // runWatchStdout emits the first snapshot immediately (so the consumer paints
 // without waiting a full interval), then mirrors the TUI cadence: the first
-// successful fast snapshot is followed by an immediate full snapshot, and later
+// usable fast snapshot is followed by an immediate full snapshot, and later
 // ticks wait for the configured interval after each collection finishes. Exits
 // cleanly when stdout closes (parent process gone).
 func runWatchStdout(interval time.Duration) {
