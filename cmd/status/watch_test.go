@@ -37,6 +37,7 @@ func TestStatusWatchProcess(t *testing.T) {
 			if err != nil {
 				return "", err
 			}
+			return "normal", nil
 		}
 		return "", errors.New("optional metric unavailable")
 	}
@@ -108,6 +109,11 @@ func TestWatchHonorsIntervalAfterInitialSnapshot(t *testing.T) {
 				t.Fatalf("healthy or recovered disk missing: %+v", snapshots[2].Disks)
 			}
 			if mode == "process-failed" {
+				for i, snapshot := range snapshots[1:] {
+					if snapshot.Memory.Pressure != "normal" {
+						t.Fatalf("snapshot %d lost successful memory pressure: %q", i+1, snapshot.Memory.Pressure)
+					}
+				}
 				trace, err := os.ReadFile(filepath.Join(fixtureHome, "full-refreshes"))
 				if err != nil {
 					t.Fatal(err)

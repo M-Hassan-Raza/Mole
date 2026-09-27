@@ -279,19 +279,25 @@ func TestCollectionRecoveryKeepsReadinessAndSerializesTicks(t *testing.T) {
 func TestCollectorAppliesCachedEnrichmentToFastSnapshot(t *testing.T) {
 	zeroZombies := 0
 	parentsComplete := true
-	previous := MetricsSnapshot{
+	collector := NewCollector(ProcessWatchOptions{})
+	collector.hasEnrichment = true
+	collector.enrichment = snapshotEnrichment{
+		cpuPCores:      8,
+		cpuECores:      4,
+		memoryCached:   512,
+		memoryPressure: "warn",
+		hardware:       HardwareInfo{Model: "MacBook Pro", CPUModel: "M3", OSVersion: "macOS 15", RefreshRate: "120Hz"},
+		gpu:            []GPUStatus{{Name: "Apple GPU", Usage: 12}},
+		trashSize:      42,
+		trashApprox:    true,
+		proxy:          ProxyStatus{Enabled: true, Type: "HTTP", Host: "127.0.0.1:8080"},
+		batteries:      []BatteryStatus{{Percent: 80, Capacity: 92}},
+		thermal:        ThermalStatus{CPUTemp: 45},
+		sensors:        []SensorReading{{Label: "Fan", Value: 1200, Unit: "rpm"}},
+		bluetooth:      []BluetoothDevice{{Name: "Keyboard", Connected: true}},
+	}
+	collector.cacheProcessEnrichment(MetricsSnapshot{
 		CollectedAt: time.Now(),
-		CPU:         CPUStatus{PCoreCount: 8, ECoreCount: 4},
-		Memory:      MemoryStatus{Cached: 512, Pressure: "warn"},
-		Hardware:    HardwareInfo{Model: "MacBook Pro", CPUModel: "M3", OSVersion: "macOS 15", RefreshRate: "120Hz"},
-		GPU:         []GPUStatus{{Name: "Apple GPU", Usage: 12}},
-		TrashSize:   42,
-		TrashApprox: true,
-		Proxy:       ProxyStatus{Enabled: true, Type: "HTTP", Host: "127.0.0.1:8080"},
-		Batteries:   []BatteryStatus{{Percent: 80, Capacity: 92}},
-		Thermal:     ThermalStatus{CPUTemp: 45},
-		Sensors:     []SensorReading{{Label: "Fan", Value: 1200, Unit: "rpm"}},
-		Bluetooth:   []BluetoothDevice{{Name: "Keyboard", Connected: true}},
 		TopProcesses: []ProcessInfo{
 			{PID: 42, Name: "Xcode", CPU: 82},
 		},
@@ -300,12 +306,7 @@ func TestCollectorAppliesCachedEnrichmentToFastSnapshot(t *testing.T) {
 		ProcessAlerts: []ProcessAlert{
 			{PID: 42, Name: "Xcode", CPU: 140, Status: "active"},
 		},
-	}
-
-	collector := NewCollector(ProcessWatchOptions{})
-	collector.cacheEnrichment(previous)
-	collector.cacheProcessEnrichment(previous)
-	previous.GPU[0].Name = "mutated"
+	})
 
 	next := MetricsSnapshot{
 		UptimeSeconds: 60,
@@ -358,12 +359,7 @@ func TestCollectorAppliesCachedEnrichmentToFastSnapshot(t *testing.T) {
 
 func TestCollectorAppliesZeroValueEnrichmentExactly(t *testing.T) {
 	collector := NewCollector(ProcessWatchOptions{})
-	collector.cacheEnrichment(MetricsSnapshot{
-		Memory: MemoryStatus{
-			Cached:   0,
-			Pressure: "",
-		},
-	})
+	collector.hasEnrichment = true
 
 	next := MetricsSnapshot{
 		Memory: MemoryStatus{
@@ -381,11 +377,13 @@ func TestCollectorAppliesZeroValueEnrichmentExactly(t *testing.T) {
 
 func TestCollectorOverridesFastDisksWithCorrectedCache(t *testing.T) {
 	collector := NewCollector(ProcessWatchOptions{})
-	collector.cacheEnrichment(MetricsSnapshot{
-		Disks: []DiskStatus{
+	collector.hasEnrichment = true
+	collector.enrichment = snapshotEnrichment{
+		hasDisks: true,
+		disks: []DiskStatus{
 			{Mount: "/", Total: 1000, Used: 600, UsedPercent: 60, External: false, SmartStatus: smartStatusVerified},
 		},
-	})
+	}
 
 	// Fast path produced raw statfs numbers that ignore APFS purgeable space.
 	next := MetricsSnapshot{
@@ -409,7 +407,7 @@ func TestCollectorKeepsFastDisksWhenCacheHasNone(t *testing.T) {
 	collector := NewCollector(ProcessWatchOptions{})
 	// First full refresh failed to enumerate disks; the cache should not blank
 	// out the fast path's raw disks.
-	collector.cacheEnrichment(MetricsSnapshot{Disks: nil})
+	collector.hasEnrichment = true
 
 	next := MetricsSnapshot{
 		Disks: []DiskStatus{
