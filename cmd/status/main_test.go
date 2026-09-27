@@ -126,104 +126,119 @@ func TestParseWatchInterval(t *testing.T) {
 	}
 }
 
-func TestNextCollectionModeUsesFastFirstThenPeriodicFull(t *testing.T) {
+func TestCollectionScheduleUsesFastFirstThenPeriodicFull(t *testing.T) {
 	now := time.Now()
-
-	m := model{}
-	if got := m.nextCollectionMode(now); got != collectionFast {
-		t.Fatalf("new model nextCollectionMode() = %v, want fast", got)
+	var schedule collectionSchedule
+	if got := schedule.nextMode(now); got != collectionFast {
+		t.Fatalf("initial collection = %v, want fast", got)
 	}
 
-	m.ready = true
-	if got := m.nextCollectionMode(now); got != collectionFull {
-		t.Fatalf("ready model without full collection = %v, want full", got)
+	first := collectionResult{mode: collectionFast, completedAt: now, data: MetricsSnapshot{CollectedAt: now}}
+	if delay := schedule.recordCompletion(first, refreshInterval); delay != 0 {
+		t.Fatalf("initial enrichment delayed by %v", delay)
+	}
+	if got := schedule.nextMode(now); got != collectionFull {
+		t.Fatalf("first enrichment = %v, want full", got)
 	}
 
-	m.lastFullAt = now.Add(-slowRefreshInterval + time.Second)
-	if got := m.nextCollectionMode(now); got != collectionProcess {
-		t.Fatalf("fresh full without process collection mode = %v, want process", got)
+	full := collectionResult{mode: collectionFull, completedAt: now, data: first.data}
+	if delay := schedule.recordCompletion(full, refreshInterval); delay != refreshInterval {
+		t.Fatalf("full collection delay = %v, want %v", delay, refreshInterval)
 	}
-
-	m.lastProcessAt = now.Add(-processWatchInterval + time.Millisecond)
-	if got := m.nextCollectionMode(now); got != collectionFast {
-		t.Fatalf("fresh process collection mode = %v, want fast", got)
-	}
-
-	m.lastProcessAt = now.Add(-processWatchInterval)
-	if got := m.nextCollectionMode(now); got != collectionProcess {
-		t.Fatalf("stale process collection mode = %v, want process", got)
-	}
-
-	m.lastFullAt = now.Add(-slowRefreshInterval)
-	if got := m.nextCollectionMode(now); got != collectionFull {
-		t.Fatalf("expired full collection mode = %v, want full", got)
+	for _, tc := range []struct {
+		after time.Duration
+		want  collectionMode
+	}{
+		{processWatchInterval - time.Nanosecond, collectionFast},
+		{processWatchInterval, collectionProcess},
+		{slowRefreshInterval - time.Nanosecond, collectionProcess},
+		{slowRefreshInterval, collectionFull},
+	} {
+		if got := schedule.nextMode(now.Add(tc.after)); got != tc.want {
+			t.Errorf("next collection after %v = %v, want %v", tc.after, got, tc.want)
+		}
 	}
 }
 
-func TestWatchStateUsesSharedCollectionCadence(t *testing.T) {
+func TestCollectionScheduleWaitsForMissingSnapshots(t *testing.T) {
 	now := time.Now()
-
-	st := watchState{}
-	if got := st.nextMode(now); got != collectionFast {
-		t.Fatalf("new watchState nextMode() = %v, want fast", got)
+	var schedule collectionSchedule
+	failed := collectionResult{mode: collectionFast, completedAt: now, err: errors.New("no snapshot")}
+	for range 2 {
+		if delay := schedule.recordCompletion(failed, refreshInterval); delay != refreshInterval {
+			t.Fatalf("missing snapshot delay = %v, want %v", delay, refreshInterval)
+		}
+		if schedule.hasSnapshot || schedule.nextMode(now) != collectionFast {
+			t.Fatal("missing snapshot advanced startup")
+		}
 	}
 
-	st.ready = true
-	if got := st.nextMode(now); got != collectionFull {
-		t.Fatalf("ready watchState without full collection = %v, want full", got)
+	// A partial snapshot is still useful. Enrich it immediately once, then
+	// honor the normal interval even when the full collection also fails.
+	failed.data.CollectedAt = now
+	if delay := schedule.recordCompletion(failed, refreshInterval); delay != 0 {
+		t.Fatalf("first usable snapshot delay = %v, want immediate enrichment", delay)
 	}
-
-	st.lastFullAt = now
-	if got := st.nextMode(now); got != collectionProcess {
-		t.Fatalf("fresh full without process collection mode = %v, want process", got)
+	failed.mode = collectionFull
+	if delay := schedule.recordCompletion(failed, refreshInterval); delay != refreshInterval {
+		t.Fatalf("failed enrichment delay = %v, want %v", delay, refreshInterval)
 	}
-
-	st.lastProcessAt = now
-	if got := st.nextMode(now); got != collectionFast {
-		t.Fatalf("fresh process collection mode = %v, want fast", got)
+	if got := schedule.nextMode(now); got != collectionFast {
+		t.Fatalf("failed enrichment next mode = %v, want fast", got)
 	}
 }
 
-func TestFullCollectionErrorDoesNotMarkFullFresh(t *testing.T) {
-	now := time.Now()
-	lastFull := now.Add(-slowRefreshInterval)
-	m := model{
-		ready:      true,
-		lastFullAt: lastFull,
-	}
-
-	updated, _ := m.Update(metricsMsg{
-		data: MetricsSnapshot{
-			CollectedAt: now,
-		},
-		err:  errors.New("full collector failed"),
-		mode: collectionFull,
-	})
-	got := updated.(model)
-
-	if !got.lastFullAt.Equal(lastFull) {
-		t.Fatalf("full error updated lastFullAt = %v, want %v", got.lastFullAt, lastFull)
-	}
-	if got.nextCollectionMode(now) != collectionFull {
-		t.Fatalf("full error should leave the next tick eligible for a full retry")
+func TestFullCollectionUsesCompletionTimeWithoutMarkingErrorsFresh(t *testing.T) {
+	startedAt := time.Now()
+	completedAt := startedAt.Add(2 * slowRefreshInterval)
+	for _, collectionErr := range []error{nil, errors.New("full collector failed")} {
+		m := model{schedule: collectionSchedule{hasSnapshot: true}}
+		updated, _ := m.Update(collectionResult{
+			data:        MetricsSnapshot{CollectedAt: startedAt},
+			err:         collectionErr,
+			mode:        collectionFull,
+			completedAt: completedAt,
+		})
+		got := updated.(model)
+		if got.fullCollected != (collectionErr == nil) {
+			t.Fatalf("fullCollected = %v after error %v", got.fullCollected, collectionErr)
+		}
+		if !got.lastUpdated.Equal(startedAt) || !got.metrics.CollectedAt.Equal(startedAt) {
+			t.Fatal("attempt completion replaced the original sample timestamp")
+		}
+		if got.schedule.nextMode(completedAt) != collectionFast {
+			t.Fatal("slow full collection immediately retried")
+		}
+		if got.schedule.nextMode(completedAt.Add(slowRefreshInterval-time.Nanosecond)) != collectionProcess {
+			t.Fatal("full collection retried before its interval elapsed")
+		}
+		if got.schedule.nextMode(completedAt.Add(slowRefreshInterval)) != collectionFull {
+			t.Fatal("full collection did not become eligible after its interval")
+		}
 	}
 }
 
-func TestProcessCollectionUpdatesProcessFreshness(t *testing.T) {
+func TestProcessFailureDoesNotForceFullRefresh(t *testing.T) {
 	now := time.Now()
-	m := model{ready: true}
-
-	updated, _ := m.Update(metricsMsg{
-		data: MetricsSnapshot{CollectedAt: now},
-		mode: collectionProcess,
-	})
-	got := updated.(model)
-
-	if !got.lastProcessAt.Equal(now) {
-		t.Fatalf("process collection updated lastProcessAt = %v, want %v", got.lastProcessAt, now)
+	m := model{schedule: collectionSchedule{hasSnapshot: true, lastFullAttemptAt: now}, fullCollected: true}
+	for second := 1; second < int(slowRefreshInterval/time.Second); second++ {
+		completedAt := now.Add(time.Duration(second) * time.Second)
+		updated, _ := m.Update(collectionResult{
+			data:        MetricsSnapshot{CollectedAt: completedAt},
+			err:         errors.New("process collector failed"),
+			mode:        collectionProcess,
+			completedAt: completedAt,
+		})
+		m = updated.(model)
+		if !m.fullCollected || !m.schedule.lastFullAttemptAt.Equal(now) {
+			t.Fatal("process failure changed the full collection state")
+		}
+		if got := m.schedule.nextMode(completedAt); got != collectionFast {
+			t.Fatalf("process failure retried immediately: mode %v", got)
+		}
 	}
-	if !got.lastFullAt.IsZero() {
-		t.Fatalf("process collection should not update lastFullAt, got %v", got.lastFullAt)
+	if got := m.schedule.nextMode(now.Add(slowRefreshInterval)); got != collectionFull {
+		t.Fatalf("full refresh suppressed after process errors: mode %v", got)
 	}
 }
 
