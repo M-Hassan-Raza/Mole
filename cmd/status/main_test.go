@@ -242,6 +242,40 @@ func TestProcessFailureDoesNotForceFullRefresh(t *testing.T) {
 	}
 }
 
+func TestCollectionRecoveryKeepsReadinessAndSerializesTicks(t *testing.T) {
+	var m model
+	now := time.Now()
+	for _, collectionErr := range []error{errors.New("probe failed"), nil, errors.New("probe failed again")} {
+		started, command := m.Update(tickMsg{})
+		m = started.(model)
+		if command == nil || !m.collecting {
+			t.Fatal("tick did not start collection")
+		}
+		if _, duplicate := m.Update(tickMsg{}); duplicate != nil {
+			t.Fatal("a second tick started overlapping collection")
+		}
+
+		wasFullCollected := m.fullCollected
+		updated, nextTick := m.Update(collectionResult{
+			data:        MetricsSnapshot{CollectedAt: now, CPU: CPUStatus{Usage: 25}},
+			err:         collectionErr,
+			mode:        collectionFull,
+			completedAt: now.Add(time.Second),
+		})
+		m = updated.(model)
+		if m.collecting || nextTick == nil || !m.schedule.hasSnapshot {
+			t.Fatal("completed collection did not publish its snapshot and schedule another tick")
+		}
+		if m.metrics.CPU.Usage != 25 || (m.errMessage != "") != (collectionErr != nil) {
+			t.Fatal("partial data or collection error was lost")
+		}
+		if m.fullCollected != (wasFullCollected || collectionErr == nil) {
+			t.Fatal("full collection readiness did not survive failure and recovery")
+		}
+		now = now.Add(slowRefreshInterval)
+	}
+}
+
 func TestCollectorAppliesCachedEnrichmentToFastSnapshot(t *testing.T) {
 	zeroZombies := 0
 	parentsComplete := true
