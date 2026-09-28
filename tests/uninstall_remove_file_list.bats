@@ -67,7 +67,7 @@ EOF
     cat > "$agents/com.example.Target.helper.plist" <<PLIST
 <?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
 PLIST
-    cat > "$agents/com.thirdparty.Target-owned.plist" <<PLIST
+    cat > "$agents/org.vendor.helper.plist" <<PLIST
 <?xml version="1.0"?><plist version="1.0"><dict><key>ProgramArguments</key><array><string>$app/Contents/MacOS/Target</string></array></dict></plist>
 PLIST
     : > "$agents/com.example.Target.plist"
@@ -80,7 +80,7 @@ app="$HOME/Applications/Target.app"
 agents="$HOME/Library/LaunchAgents"
 plan=$(find_app_files com.example.Target Target "$app")
 [[ "$plan" == *"$agents/com.example.Target.helper.plist"* ]] || exit 1
-[[ "$plan" == *"$agents/com.thirdparty.Target-owned.plist"* ]] || exit 1
+[[ "$plan" == *"$agents/org.vendor.helper.plist"* ]] || exit 1
 
 # The reviewed helper now launches an unrelated program. The selected app has
 # already moved, as it has when batch removal reaches its leftover list.
@@ -90,7 +90,7 @@ PLIST
 mv "$app" "$HOME/moved-Target.app"
 remove_file_list "$plan" false com.example.Target "$app" > /dev/null
 [[ -f "$agents/com.example.Target.helper.plist" ]] || exit 1
-[[ ! -e "$agents/com.thirdparty.Target-owned.plist" ]] || exit 1
+[[ ! -e "$agents/org.vendor.helper.plist" ]] || exit 1
 [[ ! -e "$agents/com.example.Target.plist" ]] || exit 1
 [[ -d "$HOME/moved-Target.app" ]] || exit 1
 EOF

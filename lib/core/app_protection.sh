@@ -1431,8 +1431,9 @@ find_app_files() {
         done <<< "$embedded_ids_output"
     fi
 
-    # Keep the existing bundle-ID and app-name candidate scope. A single walk
-    # avoids duplicate scans; only the owner predicate authorizes a candidate.
+    # Exact app-path ownership also covers agents with unrelated labels. Scan
+    # once, but probe familiar labels first so a crowded directory cannot use
+    # the shared deadline before the likely candidates are checked.
     if [[ -d ~/Library/LaunchAgents ]]; then
         local search_agent_name=false
         if [[ ${#app_name} -ge 5 ]] &&
@@ -1447,29 +1448,35 @@ find_app_files() {
             rm -f -- "$discovery_scan_file" 2> /dev/null || true # SAFE: exact tracked temp file created above
             return "$discovery_scan_rc"
         fi
-        local agent_scan_rc=0
-        while IFS= read -r -d '' plist; do
-            local plist_name="${plist##*/}"
-            local agent_candidate=false
-            if [[ "$bundle_id_valid" == true &&
-                ("$plist_name" == "$bundle_id.plist" ||
-                "$plist_name" == "$bundle_id."*.plist) ]]; then
-                agent_candidate=true
-            fi
-            if [[ "$search_agent_name" == true &&
-                "$plist_name" == *"$app_name"* ]]; then
-                agent_candidate=true
-            fi
-            [[ "$agent_candidate" == true ]] || continue
-            local agent_rc=0
-            mole_uninstall_launch_agent_owned_by_app "$plist" \
-                "$bundle_id" "$app_path" || agent_rc=$?
-            if mole_rc_timeout_or_signal "$agent_rc"; then
-                agent_scan_rc=$agent_rc
-                break
-            fi
-            [[ $agent_rc -eq 0 ]] && files_to_clean+=("$plist")
-        done < "$discovery_scan_file"
+        local -a agent_phases=(named)
+        [[ "$app_path" == /* && "$app_path" != / ]] && agent_phases+=(other)
+        local agent_phase agent_scan_rc=0
+        for agent_phase in "${agent_phases[@]}"; do
+            while IFS= read -r -d '' plist; do
+                local plist_name="${plist##*/}"
+                local named_candidate=false
+                if [[ "$bundle_id_valid" == true &&
+                    ("$plist_name" == "$bundle_id.plist" ||
+                    "$plist_name" == "$bundle_id."*.plist) ]]; then
+                    named_candidate=true
+                fi
+                if [[ "$search_agent_name" == true &&
+                    "$plist_name" == *"$app_name"* ]]; then
+                    named_candidate=true
+                fi
+                [[ "$agent_phase" == named && "$named_candidate" != true ]] && continue
+                [[ "$agent_phase" == other && "$named_candidate" == true ]] && continue
+                local agent_rc=0
+                mole_uninstall_launch_agent_owned_by_app "$plist" \
+                    "$bundle_id" "$app_path" || agent_rc=$?
+                if mole_rc_timeout_or_signal "$agent_rc"; then
+                    agent_scan_rc=$agent_rc
+                    break
+                fi
+                [[ $agent_rc -eq 0 ]] && files_to_clean+=("$plist")
+            done < "$discovery_scan_file"
+            [[ $agent_scan_rc -ne 0 ]] && break
+        done
         if [[ $agent_scan_rc -ne 0 ]]; then
             rm -f -- "$discovery_scan_file" 2> /dev/null || true # SAFE: exact tracked temp file created above
             return "$agent_scan_rc"
