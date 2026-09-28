@@ -358,29 +358,18 @@ _uninstall_unload_launch_plists() {
     local plist
     local result_rc=0
     while IFS= read -r -d '' plist; do
-        if [[ -n "$app_path" ]]; then
-            local grep_rc=0
-            local grep_timeout=""
-            grep_timeout=$(_mole_timeout_with_deadline \
-                "$MOLE_TIMEOUT_QUICK_DETECT_SEC" \
-                "$_MOLE_UNINSTALL_DISCOVERY_DEADLINE") || grep_rc=$?
-            if [[ $grep_rc -eq 0 ]]; then
-                run_with_timeout "$grep_timeout" grep -qF -- \
-                    "$app_path" "$plist" 2> /dev/null || grep_rc=$?
-            fi
-            # A timeout skips this plist but still tries the rest; only a
-            # signal stops the walk. Later probes share the deadline, so a
-            # spent budget fails fast instead of stalling per plist.
-            if [[ $grep_rc -ge 128 ]]; then
-                result_rc=$grep_rc
-                break
-            fi
-            if mole_rc_timeout "$grep_rc"; then
-                result_rc=$grep_rc
-                continue
-            fi
-            [[ $grep_rc -eq 0 ]] || continue
+        local owner_rc=0
+        mole_uninstall_launch_agent_owned_by_app "$plist" \
+            "$bundle_id" "$app_path" || owner_rc=$?
+        if [[ $owner_rc -ge 128 ]]; then
+            result_rc=$owner_rc
+            break
         fi
+        if mole_rc_timeout "$owner_rc"; then
+            result_rc=$owner_rc
+            continue
+        fi
+        [[ $owner_rc -eq 0 ]] || continue
         local unload_rc=0
         unload_launch_plist "$plist" "$needs_sudo" \
             "$_MOLE_UNINSTALL_DISCOVERY_DEADLINE" || unload_rc=$?
@@ -422,11 +411,9 @@ stop_launch_services() {
         return 0
     fi
 
-    # The bundle-id-keyed unloads below need a valid reverse-DNS id, but the
-    # app-path scan further down does not, and it must still run when the
-    # sibling guard demoted the bundle id to "unknown": name-globbed agent
-    # plists are deleted by remove_file_list, and skipping the unload here
-    # would leave their jobs loaded in launchd until logout.
+    # The bundle-id-keyed unloads below need a valid reverse-DNS id. The
+    # app-path scan still runs when a sibling guard demotes the id to unknown;
+    # only a program inside the selected bundle can authorize that teardown.
     local bundle_id_usable=true
     if [[ -z "$bundle_id" || "$bundle_id" == "unknown" ]]; then
         bundle_id_usable=false
@@ -458,12 +445,9 @@ stop_launch_services() {
         fi
     fi
 
-    # Scan for LaunchAgents whose ProgramArguments reference the app path.
-    # Catches agents with bundle IDs that don't match the app's bundle ID.
-    # Enumerate with find -print0 and probe each plist with grep -qF:
-    # "grep -rlZ" is not portable on macOS (BSD grep treats -Z as
-    # --decompress and prints newline-separated names), which left this scan
-    # silently dead inside a NUL-delimited read loop.
+    # Scan for differently labeled agents whose actual launchd program is
+    # inside the selected bundle. Text mentions elsewhere in a plist do not
+    # authorize unloading it.
     if [[ -n "$app_path" ]]; then
         if [[ -d ~/Library/LaunchAgents ]]; then
             _stop_launch_services_root \

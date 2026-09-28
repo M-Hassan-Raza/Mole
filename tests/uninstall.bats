@@ -1604,9 +1604,17 @@ EOF
     # the selected beta must still be unloaded under the guard (the bundle id
     # is demoted to "unknown", but the path scan is exact evidence), while the
     # one pointing at the survivor must stay loaded.
-    mkdir -p "$HOME/Library/LaunchAgents"
-    printf '%s' "$HOME/Applications/SharedName-beta.app/Contents/MacOS/SharedName" > "$HOME/Library/LaunchAgents/com.thirdparty.betahelper.plist"
-    printf '%s' "$HOME/Applications/SharedName.app/Contents/MacOS/SharedName" > "$HOME/Library/LaunchAgents/com.thirdparty.stablehelper.plist"
+    mkdir -p "$HOME/Library/LaunchAgents" \
+        "$HOME/Applications/SharedName-beta.app/Contents/MacOS" \
+        "$HOME/Applications/SharedName.app/Contents/MacOS"
+    touch "$HOME/Applications/SharedName-beta.app/Contents/MacOS/SharedName" \
+        "$HOME/Applications/SharedName.app/Contents/MacOS/SharedName"
+    cat > "$HOME/Library/LaunchAgents/com.thirdparty.betahelper.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$HOME/Applications/SharedName-beta.app/Contents/MacOS/SharedName</string></dict></plist>
+PLIST
+    cat > "$HOME/Library/LaunchAgents/com.thirdparty.stablehelper.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$HOME/Applications/SharedName.app/Contents/MacOS/SharedName</string></dict></plist>
+PLIST
 
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
@@ -2247,10 +2255,17 @@ EOF
 }
 
 @test "stop_launch_services unloads launch agents without deleting plists" {
-    mkdir -p "$HOME/Library/LaunchAgents"
+    mkdir -p "$HOME/Library/LaunchAgents" \
+        "$HOME/Applications/TestApp.app/Contents/MacOS"
+    touch "$HOME/Applications/TestApp.app/Contents/MacOS/TestApp"
     touch "$HOME/Library/LaunchAgents/com.example.TestApp.plist"
-    touch "$HOME/Library/LaunchAgents/com.example.TestApp.helper.plist"
     touch "$HOME/Library/LaunchAgents/com.example.TestApplication.plist"
+    cat > "$HOME/Library/LaunchAgents/com.example.TestApp.helper.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>ProgramArguments</key><array><string>$HOME/Applications/TestApp.app/Contents/MacOS/TestApp</string></array></dict></plist>
+PLIST
+    cat > "$HOME/Library/LaunchAgents/com.thirdparty.TestApp-other.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><!-- $HOME/Applications/TestApp.app --><dict><key>Program</key><string>/bin/true</string></dict></plist>
+PLIST
 
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
@@ -2274,15 +2289,17 @@ safe_sudo_remove() {
 	return 0
 }
 
-stop_launch_services "com.example.TestApp" "false" ""
+stop_launch_services "com.example.TestApp" "false" "$HOME/Applications/TestApp.app"
 
 	grep -Fq "launchctl unload $HOME/Library/LaunchAgents/com.example.TestApp.plist" "$trace"
 	grep -Fq "launchctl unload $HOME/Library/LaunchAgents/com.example.TestApp.helper.plist" "$trace"
 	! grep -Fq "com.example.TestApplication.plist" "$trace"
+	! grep -Fq "com.thirdparty.TestApp-other.plist" "$trace"
 	! grep -q "safe_remove" "$trace"
 	[[ -f "$HOME/Library/LaunchAgents/com.example.TestApp.plist" ]] || exit 1
 	[[ -f "$HOME/Library/LaunchAgents/com.example.TestApp.helper.plist" ]] || exit 1
 	[[ -f "$HOME/Library/LaunchAgents/com.example.TestApplication.plist" ]] || exit 1
+	[[ -f "$HOME/Library/LaunchAgents/com.thirdparty.TestApp-other.plist" ]] || exit 1
 EOF
 
     [ "$status" -eq 0 ]
