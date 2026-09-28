@@ -44,6 +44,43 @@ EOF
 	[[ "$result" == *"$HOME/Library/Application Support/Local"* ]] || { echo "missed Local app state"; exit 1; }
 }
 
+@test "uninstall discovers only LaunchAgents owned by the selected app" {
+	local app="$HOME/Applications/Target.app"
+	local agents="$HOME/Library/LaunchAgents"
+	mkdir -p "$app/Contents/MacOS" "$agents"
+	touch "$app/Contents/MacOS/Target"
+	ln -s /bin/true "$app/Contents/MacOS/Outside"
+	cat > "$agents/com.thirdparty.Target-daily.plist" <<'PLIST'
+<?xml version="1.0"?><plist version="1.0"><dict><key>ProgramArguments</key><array><string>/bin/true</string></array></dict></plist>
+PLIST
+	cat > "$agents/com.example.Target.helper.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>ProgramArguments</key><array><string>$app/Contents/MacOS/Target</string></array></dict></plist>
+PLIST
+	cat > "$agents/com.thirdparty.Target-owned.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+	cat > "$agents/com.example.Target.outside.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Outside</string></dict></plist>
+PLIST
+	: > "$agents/com.example.Target.plist"
+	: > "$agents/com.example.Target.other.plist"
+
+	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_TEST_NO_AUTH=1 \
+		/bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+find_app_files "com.example.Target" "Target" "$HOME/Applications/Target.app"
+EOF
+
+	[ "$status" -eq 0 ] || return 1
+	[[ "$output" == *"$agents/com.example.Target.plist"* ]] || return 1
+	[[ "$output" == *"$agents/com.example.Target.helper.plist"* ]] || return 1
+	[[ "$output" == *"$agents/com.thirdparty.Target-owned.plist"* ]] || return 1
+	[[ "$output" != *"$agents/com.thirdparty.Target-daily.plist"* ]] || return 1
+	[[ "$output" != *"$agents/com.example.Target.other.plist"* ]] || return 1
+	[[ "$output" != *"$agents/com.example.Target.outside.plist"* ]] || return 1
+}
+
 @test "find_app_files preserves Android Studio project source and credentials" {
 	mkdir -p "$HOME/AndroidStudioProjects/my-app"
 	mkdir -p "$HOME/.android/avd/Pixel_5.avd"
