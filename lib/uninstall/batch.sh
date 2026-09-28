@@ -316,16 +316,35 @@ unload_launch_plist() {
     local app_path="${5:-}"
     local _MOLE_UNINSTALL_DISCOVERY_DEADLINE="${deadline:-${_MOLE_UNINSTALL_DISCOVERY_DEADLINE:-}}"
     can_unload_launch_plist "$plist" || return 0
+    [[ -f "$plist" && ! -L "$plist" ]] || return 0
+    _mole_snapshot_path_identity "$plist" || return 0
+    local expected_parent="$_MOLE_PATH_SNAPSHOT_PARENT"
+    local expected_parent_id="$_MOLE_PATH_SNAPSHOT_PARENT_ID"
+    local expected_target_id="$_MOLE_PATH_SNAPSHOT_TARGET_ID"
+    local expected_sha256="" hash_rc=0
+    expected_sha256=$(mole_file_sha256 "$plist" "$deadline") || hash_rc=$?
+    mole_rc_timeout_or_signal "$hash_rc" && return "$hash_rc"
+    [[ $hash_rc -eq 0 ]] || return 0
     local owner_rc=0
     mole_uninstall_launch_agent_owned_by_app "$plist" \
         "$bundle_id" "$app_path" || owner_rc=$?
     mole_rc_timeout_or_signal "$owner_rc" && return "$owner_rc"
     [[ $owner_rc -eq 0 ]] || return 0
+
     local unload_timeout="$MOLE_TIMEOUT_MEDIUM_PROBE_SEC"
     if [[ -n "$deadline" ]]; then
         unload_timeout=$(_mole_timeout_with_deadline "$unload_timeout" \
             "$deadline") || return $?
     fi
+
+    # plutil reads a file descriptor, while launchctl later opens this path.
+    # Rebind both content and identity after the owner probe.
+    local bound_rc=0
+    _mole_owned_path_still_valid "$plist" "$expected_sha256" "" \
+        "$expected_parent" "$expected_parent_id" "$expected_target_id" \
+        "$deadline" || bound_rc=$?
+    mole_rc_timeout_or_signal "$bound_rc" && return "$bound_rc"
+    [[ $bound_rc -eq 0 ]] || return 0
     if [[ "$needs_sudo" == "true" ]]; then
         local unload_rc=0
         run_with_timeout "$unload_timeout" sudo launchctl \
