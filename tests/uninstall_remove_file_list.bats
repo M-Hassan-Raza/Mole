@@ -164,6 +164,7 @@ EOF
         echo "$output"
         return 1
     }
+    [[ "$output" == *"selected app path exists again"* ]] || return 1
 }
 
 @test "uninstall keeps an agent if the app path reappears during sizing" {
@@ -266,6 +267,49 @@ EOF
     }
 }
 
+@test "uninstall keeps a replacement installed during the final content check" {
+    local app="$HOME/Applications/Target.app"
+    local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+    mkdir -p "$app/Contents/MacOS" "${agent%/*}"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agent" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+mv "$app" "$HOME/moved-Target.app"
+mole_file_sha256() {
+    local digest calls=0
+    digest=$(shasum -a 256 -- "$1") || return $?
+    [[ -f "$HOME/hash-calls" ]] && read -r calls < "$HOME/hash-calls"
+    calls=$((calls + 1))
+    printf '%s\n' "$calls" > "$HOME/hash-calls"
+    if [[ $calls -eq 3 ]]; then
+        mv "$1" "$HOME/old-agent.plist"
+        cat > "$1" <<'PLIST'
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>/bin/true</string></dict></plist>
+PLIST
+    fi
+    printf '%s\n' "${digest:0:64}"
+}
+count=$(remove_file_list "$agent" false com.example.Target "$app")
+[[ "$(cat "$HOME/hash-calls")" -eq 3 ]] || exit 1
+[[ "$count" == 0 && -f "$agent" && -f "$HOME/old-agent.plist" ]] || exit 1
+grep -Fq '<string>/bin/true</string>' "$agent" || exit 1
+[[ ! -d "$MOLE_TEST_TRASH_DIR" || -z "$(ls -A "$MOLE_TEST_TRASH_DIR")" ]] || exit 1
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
 @test "uninstall rechecks app absence at permanent removal" {
     local app="$HOME/Applications/Target.app"
     local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
@@ -292,6 +336,53 @@ count=$(remove_file_list "$agent" false com.example.Target "$app")
 [[ "$count" == 0 ]] || exit 1
 [[ -f "$agent" ]] || exit 1
 [[ -f "$app/Contents/MacOS/Target" ]] || exit 1
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
+@test "permanent removal rebinds ownership after calculating its timeout" {
+    local app="$HOME/Applications/Target.app"
+    local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+    mkdir -p "$app/Contents/MacOS" "${agent%/*}"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agent" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+mv "$app" "$HOME/moved-Target.app"
+MOLE_DELETE_MODE=permanent
+_mole_timeout_with_deadline() {
+    local calls=0
+    if [[ "$1" == "$MOLE_TIMEOUT_DISK_VERIFY_SEC" ]]; then
+        [[ -f "$HOME/timeout-calls" ]] && read -r calls < "$HOME/timeout-calls"
+        calls=$((calls + 1))
+        printf '%s\n' "$calls" > "$HOME/timeout-calls"
+        if [[ $calls -eq 2 ]]; then
+            mv "$agent" "$HOME/original-agent.plist"
+            cat > "$agent" <<'PLIST'
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>/bin/true</string></dict></plist>
+PLIST
+        fi
+    fi
+    printf '%s\n' "$1"
+}
+count=$(remove_file_list "$agent" false com.example.Target "$app")
+[[ "$(cat "$HOME/timeout-calls")" -eq 2 ]] || { echo 'timeout boundary not reached twice'; exit 1; }
+[[ "$count" == 0 && -f "$agent" && -f "$HOME/original-agent.plist" ]] || {
+    printf 'count=%s agent=%s original=%s\n' "$count" "$(test -e "$agent" && echo yes || echo no)" "$(test -e "$HOME/original-agent.plist" && echo yes || echo no)"
+    exit 1
+}
+grep -Fq '<string>/bin/true</string>' "$agent" || exit 1
 EOF
 
     [ "$status" -eq 0 ] || {

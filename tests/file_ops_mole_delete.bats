@@ -247,7 +247,7 @@ EOF
         echo "$output"
         return 1
     }
-    [[ "$output" == *"ownership could not be confirmed"* ]] || return 1
+    [[ "$output" == *"agent file changed or could not be inspected"* ]] || return 1
     [[ "$output" != *"Trash unavailable"* ]]
 }
 

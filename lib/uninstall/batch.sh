@@ -592,6 +592,8 @@ remove_file_list() {
                 # original bundle has already moved before leftover removal.
                 if [[ -n "$app_path" && (-e "$app_path" || -L "$app_path") ]] &&
                     ! is_uninstall_dry_run; then
+                    _mole_report_unverified_delete "$file" "$mode" "unknown" \
+                        "$MOLE_ERR_APP_REAPPEARED"
                     continue
                 fi
                 if ! is_uninstall_dry_run; then
@@ -600,16 +602,25 @@ remove_file_list() {
                 local identity_rc=0
                 launch_agent_identity=$(mole_deletion_identity "$file") || identity_rc=$?
                 mole_rc_timeout_or_signal "$identity_rc" && return "$identity_rc"
-                [[ $identity_rc -eq 0 ]] || continue
+                if [[ $identity_rc -ne 0 ]]; then
+                    _mole_report_unverified_delete "$file" "$mode" "unknown"
+                    continue
+                fi
                 local hash_rc=0
                 launch_agent_sha256=$(mole_file_sha256 "$file") || hash_rc=$?
                 mole_rc_timeout_or_signal "$hash_rc" && return "$hash_rc"
-                [[ $hash_rc -eq 0 ]] || continue
+                if [[ $hash_rc -ne 0 ]]; then
+                    _mole_report_unverified_delete "$file" "$mode" "unknown"
+                    continue
+                fi
                 local owner_rc=0
                 mole_uninstall_launch_agent_owned_by_app "$file" \
                     "$bundle_id" "$app_path" || owner_rc=$?
                 mole_rc_timeout_or_signal "$owner_rc" && return "$owner_rc"
-                [[ $owner_rc -eq 0 ]] || continue
+                if [[ $owner_rc -ne 0 ]]; then
+                    _mole_report_unverified_delete "$file" "$mode" "unknown"
+                    continue
+                fi
                 ;;
         esac
 
