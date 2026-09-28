@@ -560,6 +560,8 @@ remove_login_item() {
 remove_file_list() {
     local file_list="$1"
     local use_sudo="${2:-false}"
+    local bundle_id="${3:-}"
+    local app_path="${4:-}"
     local count=0
     local mode="${MOLE_DELETE_MODE:-permanent}"
 
@@ -577,9 +579,31 @@ remove_file_list() {
             continue
         fi
 
+        local launch_agent=false
+        case "${file%/*}" in
+            "$HOME"/Library/LaunchAgents | /Library/LaunchAgents | /Library/LaunchDaemons)
+                launch_agent=true
+                local owner_rc=0
+                mole_uninstall_launch_agent_owned_by_app "$file" \
+                    "$bundle_id" "$app_path" || owner_rc=$?
+                mole_rc_timeout_or_signal "$owner_rc" && return "$owner_rc"
+                [[ $owner_rc -eq 0 ]] || continue
+                ;;
+        esac
+
         if [[ "$use_sudo" == "true" ]] && is_uninstall_dry_run; then
             debug_log "[DRY RUN] Would sudo remove: $file"
             ((++count))
+            continue
+        fi
+
+        # Agent ownership is checked immediately before its own sink. Do not
+        # queue it behind unrelated Trash batch work after that check.
+        if [[ "$launch_agent" == true ]]; then
+            local delete_rc=0
+            mole_delete "$file" "$use_sudo" || delete_rc=$?
+            mole_rc_timeout_or_signal "$delete_rc" && return "$delete_rc"
+            [[ $delete_rc -eq 0 ]] && count=$((count + 1))
             continue
         fi
 
@@ -2194,7 +2218,8 @@ _batch_execute_removals() {
                 start_inline_spinner "${_phase_prefix}Cleaning files for ${app_name}..."
             fi
             local related_remove_rc=0
-            remove_file_list "$related_files" "false" > /dev/null || related_remove_rc=$?
+            remove_file_list "$related_files" "false" \
+                "$bundle_id" "$app_path" > /dev/null || related_remove_rc=$?
             mole_rc_timeout_or_signal "$related_remove_rc" && return "$related_remove_rc"
 
             # Identify leftovers (silent rm failures, e.g. container directories
@@ -2234,7 +2259,8 @@ _batch_execute_removals() {
             fi
             if [[ "$used_brew_successfully" == "true" ]]; then
                 local system_remove_rc=0
-                remove_file_list "$diag_system" "true" > /dev/null || system_remove_rc=$?
+                remove_file_list "$diag_system" "true" \
+                    "$bundle_id" "$app_path" > /dev/null || system_remove_rc=$?
                 mole_rc_timeout_or_signal "$system_remove_rc" && return "$system_remove_rc"
             else
                 local system_all="$system_files"
@@ -2245,7 +2271,8 @@ _batch_execute_removals() {
                     system_all+="$diag_system"
                 fi
                 local system_remove_rc=0
-                remove_file_list "$system_all" "true" > /dev/null || system_remove_rc=$?
+                remove_file_list "$system_all" "true" \
+                    "$bundle_id" "$app_path" > /dev/null || system_remove_rc=$?
                 mole_rc_timeout_or_signal "$system_remove_rc" && return "$system_remove_rc"
             fi
 

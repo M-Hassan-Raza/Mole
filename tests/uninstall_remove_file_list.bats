@@ -59,6 +59,48 @@ EOF
     [[ ! -d "$MOLE_TEST_TRASH_DIR" ]]
 }
 
+@test "uninstall keeps a LaunchAgent whose program changed after preview" {
+    local app="$HOME/Applications/Target.app"
+    local agents="$HOME/Library/LaunchAgents"
+    mkdir -p "$app/Contents/MacOS" "$agents"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agents/com.example.Target.helper.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+    cat > "$agents/com.thirdparty.Target-owned.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>ProgramArguments</key><array><string>$app/Contents/MacOS/Target</string></array></dict></plist>
+PLIST
+    : > "$agents/com.example.Target.plist"
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agents="$HOME/Library/LaunchAgents"
+plan=$(find_app_files com.example.Target Target "$app")
+[[ "$plan" == *"$agents/com.example.Target.helper.plist"* ]] || exit 1
+[[ "$plan" == *"$agents/com.thirdparty.Target-owned.plist"* ]] || exit 1
+
+# The reviewed helper now launches an unrelated program. The selected app has
+# already moved, as it has when batch removal reaches its leftover list.
+cat > "$agents/com.example.Target.helper.plist" <<'PLIST'
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>/bin/true</string></dict></plist>
+PLIST
+mv "$app" "$HOME/moved-Target.app"
+remove_file_list "$plan" false com.example.Target "$app" > /dev/null
+[[ -f "$agents/com.example.Target.helper.plist" ]] || exit 1
+[[ ! -e "$agents/com.thirdparty.Target-owned.plist" ]] || exit 1
+[[ ! -e "$agents/com.example.Target.plist" ]] || exit 1
+[[ -d "$HOME/moved-Target.app" ]] || exit 1
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
 @test "remove_file_list batches eligible Trash moves into a single helper call" {
     local f1="$SANDBOX/a.plist"
     local f2="$SANDBOX/b.plist"
