@@ -286,8 +286,6 @@ The health score combines CPU, memory, disk capacity, SMART status, I/O, thermal
 - `mo status --watch --interval 2s` streams newline-delimited JSON from a warm collector.
 - `mo history --json` returns cleanup activity as JSON.
 
-The dashboard and watch mode start with a fast snapshot, then immediately attempt full collection once a usable snapshot is available. Later watch snapshots wait for the configured interval, including after probe failures; full refresh attempts remain spaced by 30 seconds after completion. A failed collection task does not discard successful measurements from other tasks.
-
 ```text
 $ mo analyze --json ~/Documents
 {
