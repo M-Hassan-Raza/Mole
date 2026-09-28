@@ -1615,6 +1615,7 @@ PLIST
     cat > "$HOME/Library/LaunchAgents/com.thirdparty.stablehelper.plist" <<PLIST
 <?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$HOME/Applications/SharedName.app/Contents/MacOS/SharedName</string></dict></plist>
 PLIST
+    mole_test_fake_command launchctl 'if [[ "$1" == unload ]]; then printf "UNLOAD:%s\n" "$2" >> "$HOME/unload.log"; fi'
 
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
@@ -1636,7 +1637,6 @@ pkill() { return 0; }
 sudo() { return 0; }
 remove_login_item() { printf 'LOGIN_ITEM:%s\n' "$1" >> "$HOME/login.log"; }
 force_kill_app() { printf 'KILL:%s\n' "$1" >> "$HOME/kill.log"; return 0; }
-unload_launch_plist() { printf 'UNLOAD:%s\n' "$1" >> "$HOME/unload.log"; }
 
 # Case 1: display names collide ("SharedName" for both) but basenames differ.
 # Discovery must use the basename (SharedName-beta) so the survivor's
@@ -1742,7 +1742,10 @@ grep -q "KILL:SoloApp" "$HOME/kill.log" 2> /dev/null || { echo "WRONG: terminati
 [[ ! -f "$HOME/Library/Logs/DiagnosticReports/SoloApp-2026-07-03-101010.ips" ]] || { echo "WRONG: diagnostic reports not collected without sibling guard (case 5)"; exit 1; }
 EOF
 
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
 }
 
 @test "batch_uninstall_applications blocks official-uninstaller apps" {
