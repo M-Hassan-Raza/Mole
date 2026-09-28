@@ -751,10 +751,11 @@ _mole_uninstall_materialize_find0() {
     return 0
 }
 
-# Exact bundle-ID filenames identify the app's own agent. Other labels are
-# eligible only when launchd executes a file inside the selected app bundle.
-# A name match, text mention, unreadable plist, or symlinked executable is not
-# ownership evidence. Recheck this at teardown and at the removal sink.
+# Exact bundle-ID filenames identify the app's own agent. Other labels need a
+# readable plist whose launchd program resolves inside the selected bundle;
+# name matches and text mentions do not establish that ownership. Callers
+# recheck before teardown and removal. Returns 0 for owned, 1 for unproven,
+# or the timeout/signal status of a bounded plist probe.
 mole_uninstall_launch_agent_owned_by_app() {
     local plist="$1"
     local bundle_id="$2"
@@ -773,20 +774,17 @@ mole_uninstall_launch_agent_owned_by_app() {
     fi
     [[ "$app_path" == /* && "$app_path" != / ]] || return 1
 
-    local timeout="$MOLE_TIMEOUT_QUICK_DETECT_SEC"
-    if [[ -n "${_MOLE_UNINSTALL_DISCOVERY_DEADLINE:-}" ]]; then
-        timeout=$(_mole_timeout_with_deadline "$timeout" \
-            "$_MOLE_UNINSTALL_DISCOVERY_DEADLINE") || return $?
-    fi
+    local deadline="${_MOLE_UNINSTALL_DISCOVERY_DEADLINE:-$((SECONDS + MOLE_TIMEOUT_QUICK_DETECT_SEC))}"
+    local timeout=""
+    timeout=$(_mole_timeout_with_deadline "$MOLE_TIMEOUT_QUICK_DETECT_SEC" \
+        "$deadline") || return $?
     local program="" probe_rc=0
     program=$(run_with_timeout "$timeout" plutil -extract Program raw \
         "$plist" 2> /dev/null) || probe_rc=$?
     mole_rc_timeout_or_signal "$probe_rc" && return "$probe_rc"
     if [[ $probe_rc -ne 0 ]]; then
-        if [[ -n "${_MOLE_UNINSTALL_DISCOVERY_DEADLINE:-}" ]]; then
-            timeout=$(_mole_timeout_with_deadline "$timeout" \
-                "$_MOLE_UNINSTALL_DISCOVERY_DEADLINE") || return $?
-        fi
+        timeout=$(_mole_timeout_with_deadline "$MOLE_TIMEOUT_QUICK_DETECT_SEC" \
+            "$deadline") || return $?
         probe_rc=0
         program=$(run_with_timeout "$timeout" plutil -extract \
             ProgramArguments.0 raw "$plist" 2> /dev/null) || probe_rc=$?
@@ -1433,10 +1431,14 @@ find_app_files() {
         done <<< "$embedded_ids_output"
     fi
 
-    # One user-agent walk covers exact bundle IDs and differently labeled jobs
-    # whose program is inside the selected app. Filename resemblance alone
-    # never authorizes deletion.
+    # Keep the existing bundle-ID and app-name candidate scope. A single walk
+    # avoids duplicate scans; only the owner predicate authorizes a candidate.
     if [[ -d ~/Library/LaunchAgents ]]; then
+        local search_agent_name=false
+        if [[ ${#app_name} -ge 5 ]] &&
+            ! [[ "$app_name" =~ ^(${LAUNCH_AGENT_NAME_COMMON_WORDS})$ ]]; then
+            search_agent_name=true
+        fi
         discovery_scan_rc=0
         _mole_uninstall_materialize_find0 "$discovery_scan_file" \
             "$HOME/Library/LaunchAgents" -maxdepth 1 -type f \
@@ -1447,6 +1449,18 @@ find_app_files() {
         fi
         local agent_scan_rc=0
         while IFS= read -r -d '' plist; do
+            local plist_name="${plist##*/}"
+            local agent_candidate=false
+            if [[ "$bundle_id_valid" == true &&
+                ("$plist_name" == "$bundle_id.plist" ||
+                "$plist_name" == "$bundle_id."*.plist) ]]; then
+                agent_candidate=true
+            fi
+            if [[ "$search_agent_name" == true &&
+                "$plist_name" == *"$app_name"* ]]; then
+                agent_candidate=true
+            fi
+            [[ "$agent_candidate" == true ]] || continue
             local agent_rc=0
             mole_uninstall_launch_agent_owned_by_app "$plist" \
                 "$bundle_id" "$app_path" || agent_rc=$?
