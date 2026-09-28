@@ -582,9 +582,29 @@ remove_file_list() {
         fi
 
         local launch_agent=false
+        local launch_agent_identity=""
+        local launch_agent_sha256=""
+        local launch_absent_path=""
         case "${file%/*}" in
             "$HOME"/Library/LaunchAgents | /Library/LaunchAgents | /Library/LaunchDaemons)
                 launch_agent=true
+                # A replacement app at the selected path is a new owner. The
+                # original bundle has already moved before leftover removal.
+                if [[ -n "$app_path" && (-e "$app_path" || -L "$app_path") ]] &&
+                    ! is_uninstall_dry_run; then
+                    continue
+                fi
+                if ! is_uninstall_dry_run; then
+                    launch_absent_path="$app_path"
+                fi
+                local identity_rc=0
+                launch_agent_identity=$(mole_deletion_identity "$file") || identity_rc=$?
+                mole_rc_timeout_or_signal "$identity_rc" && return "$identity_rc"
+                [[ $identity_rc -eq 0 ]] || continue
+                local hash_rc=0
+                launch_agent_sha256=$(mole_file_sha256 "$file") || hash_rc=$?
+                mole_rc_timeout_or_signal "$hash_rc" && return "$hash_rc"
+                [[ $hash_rc -eq 0 ]] || continue
                 local owner_rc=0
                 mole_uninstall_launch_agent_owned_by_app "$file" \
                     "$bundle_id" "$app_path" || owner_rc=$?
@@ -603,7 +623,8 @@ remove_file_list() {
         # queue it behind unrelated Trash batch work after that check.
         if [[ "$launch_agent" == true ]]; then
             local delete_rc=0
-            mole_delete "$file" "$use_sudo" || delete_rc=$?
+            mole_delete "$file" "$use_sudo" "$launch_agent_identity" \
+                "$launch_agent_sha256" "$launch_absent_path" || delete_rc=$?
             mole_rc_timeout_or_signal "$delete_rc" && return "$delete_rc"
             [[ $delete_rc -eq 0 ]] && count=$((count + 1))
             continue

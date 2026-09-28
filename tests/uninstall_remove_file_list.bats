@@ -101,6 +101,205 @@ EOF
     }
 }
 
+@test "uninstall keeps a LaunchAgent replaced while deletion is being sized" {
+    local app="$HOME/Applications/Target.app"
+    local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+    mkdir -p "$app/Contents/MacOS" "${agent%/*}"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agent" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+mv "$app" "$HOME/moved-Target.app"
+get_path_size_kb() {
+    cat > "$agent" <<'PLIST'
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>/bin/true</string></dict></plist>
+PLIST
+    printf '1\n'
+}
+count=$(remove_file_list "$agent" false com.example.Target "$app")
+[[ "$count" == 0 ]] || exit 1
+[[ -f "$agent" ]] || exit 1
+grep -Fq '<string>/bin/true</string>' "$agent"
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
+@test "uninstall keeps LaunchAgents if another app takes the selected path" {
+    local app="$HOME/Applications/Target.app"
+    local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+    mkdir -p "$app/Contents/MacOS" "${agent%/*}"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agent" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+plan=$(find_app_files com.example.Target Target "$app")
+[[ "$plan" == *"$agent"* ]] || exit 1
+mv "$app" "$HOME/moved-Target.app"
+mkdir -p "$app/Contents/MacOS"
+touch "$app/Contents/MacOS/Target"
+count=$(remove_file_list "$plan" false com.example.Target "$app")
+[[ "$count" == 0 ]] || exit 1
+[[ -f "$agent" ]] || exit 1
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
+@test "uninstall keeps an agent if the app path reappears during sizing" {
+    local app="$HOME/Applications/Target.app"
+    local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+    mkdir -p "$app/Contents/MacOS" "${agent%/*}"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agent" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+mv "$app" "$HOME/moved-Target.app"
+get_path_size_kb() {
+    mkdir -p "$app/Contents/MacOS"
+    touch "$app/Contents/MacOS/Target"
+    printf '1\n'
+}
+count=$(remove_file_list "$agent" false com.example.Target "$app")
+[[ "$count" == 0 ]] || exit 1
+[[ -f "$agent" ]] || exit 1
+[[ -f "$app/Contents/MacOS/Target" ]] || exit 1
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
+@test "uninstall rechecks app absence at the Trash move" {
+    local app="$HOME/Applications/Target.app"
+    local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+    mkdir -p "$app/Contents/MacOS" "${agent%/*}"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agent" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+mv "$app" "$HOME/moved-Target.app"
+_mole_trash_target_still_safe() {
+    mkdir -p "$app/Contents/MacOS"
+    touch "$app/Contents/MacOS/Target"
+    return 0
+}
+count=$(remove_file_list "$agent" false com.example.Target "$app")
+[[ "$count" == 0 ]] || exit 1
+[[ -f "$agent" ]] || exit 1
+[[ -f "$app/Contents/MacOS/Target" ]] || exit 1
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
+@test "uninstall rechecks agent content at the Trash move" {
+    local app="$HOME/Applications/Target.app"
+    local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+    mkdir -p "$app/Contents/MacOS" "${agent%/*}"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agent" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+mv "$app" "$HOME/moved-Target.app"
+_mole_trash_target_still_safe() {
+    cat > "$agent" <<'PLIST'
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>/bin/true</string></dict></plist>
+PLIST
+    return 0
+}
+count=$(remove_file_list "$agent" false com.example.Target "$app")
+[[ "$count" == 0 ]] || exit 1
+[[ -f "$agent" ]] || exit 1
+grep -Fq '<string>/bin/true</string>' "$agent"
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
+@test "uninstall rechecks app absence at permanent removal" {
+    local app="$HOME/Applications/Target.app"
+    local agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+    mkdir -p "$app/Contents/MacOS" "${agent%/*}"
+    touch "$app/Contents/MacOS/Target"
+    cat > "$agent" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$app/Contents/MacOS/Target</string></dict></plist>
+PLIST
+
+    run env PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+app="$HOME/Applications/Target.app"
+agent="$HOME/Library/LaunchAgents/com.example.Target.helper.plist"
+mv "$app" "$HOME/moved-Target.app"
+MOLE_DELETE_MODE=permanent
+_MOLE_SAFE_REMOVE_FINAL_GUARD=create_replacement_app
+create_replacement_app() {
+    mkdir -p "$app/Contents/MacOS"
+    touch "$app/Contents/MacOS/Target"
+}
+count=$(remove_file_list "$agent" false com.example.Target "$app")
+[[ "$count" == 0 ]] || exit 1
+[[ -f "$agent" ]] || exit 1
+[[ -f "$app/Contents/MacOS/Target" ]] || exit 1
+EOF
+
+    [ "$status" -eq 0 ] || {
+        echo "$output"
+        return 1
+    }
+}
+
 @test "remove_file_list batches eligible Trash moves into a single helper call" {
     local f1="$SANDBOX/a.plist"
     local f2="$SANDBOX/b.plist"
