@@ -312,7 +312,15 @@ unload_launch_plist() {
     local plist="$1"
     local needs_sudo="${2:-false}"
     local deadline="${3:-}"
+    local bundle_id="${4:-}"
+    local app_path="${5:-}"
+    local _MOLE_UNINSTALL_DISCOVERY_DEADLINE="${deadline:-${_MOLE_UNINSTALL_DISCOVERY_DEADLINE:-}}"
     can_unload_launch_plist "$plist" || return 0
+    local owner_rc=0
+    mole_uninstall_launch_agent_owned_by_app "$plist" \
+        "$bundle_id" "$app_path" || owner_rc=$?
+    mole_rc_timeout_or_signal "$owner_rc" && return "$owner_rc"
+    [[ $owner_rc -eq 0 ]] || return 0
     local unload_timeout="$MOLE_TIMEOUT_MEDIUM_PROBE_SEC"
     if [[ -n "$deadline" ]]; then
         unload_timeout=$(_mole_timeout_with_deadline "$unload_timeout" \
@@ -358,21 +366,10 @@ _uninstall_unload_launch_plists() {
     local plist
     local result_rc=0
     while IFS= read -r -d '' plist; do
-        local owner_rc=0
-        mole_uninstall_launch_agent_owned_by_app "$plist" \
-            "$bundle_id" "$app_path" || owner_rc=$?
-        if [[ $owner_rc -ge 128 ]]; then
-            result_rc=$owner_rc
-            break
-        fi
-        if mole_rc_timeout "$owner_rc"; then
-            result_rc=$owner_rc
-            continue
-        fi
-        [[ $owner_rc -eq 0 ]] || continue
         local unload_rc=0
         unload_launch_plist "$plist" "$needs_sudo" \
-            "$_MOLE_UNINSTALL_DISCOVERY_DEADLINE" || unload_rc=$?
+            "$_MOLE_UNINSTALL_DISCOVERY_DEADLINE" \
+            "$bundle_id" "$app_path" || unload_rc=$?
         if [[ $unload_rc -ge 128 ]]; then
             result_rc=$unload_rc
             break

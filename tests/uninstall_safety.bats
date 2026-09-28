@@ -164,6 +164,7 @@ EOF
 @test "launch plist unload validates path and uses timeout" {
 	mkdir -p "$HOME/Library/LaunchAgents"
 	touch "$HOME/Library/LaunchAgents/com.example.foo.plist"
+	touch "$HOME/Library/LaunchAgents/com.example.foo.helper.plist"
 
 	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
@@ -171,12 +172,16 @@ source "$PROJECT_ROOT/lib/core/common.sh"
 source "$PROJECT_ROOT/lib/uninstall/batch.sh"
 
 run_with_timeout() {
-	printf '%s\n' "$*" > "$HOME/launchctl-call.log"
+	printf '%s\n' "$*" >> "$HOME/launchctl-call.log"
 	return 0
 }
 
-unload_launch_plist "$HOME/Library/LaunchAgents/com.example.foo.plist" "false"
+unload_launch_plist "$HOME/Library/LaunchAgents/com.example.foo.plist" \
+    "false" "" "com.example.foo"
+unload_launch_plist "$HOME/Library/LaunchAgents/com.example.foo.helper.plist" \
+    "false" "" "com.example.foo"
 grep -q "5 launchctl unload $HOME/Library/LaunchAgents/com.example.foo.plist" "$HOME/launchctl-call.log"
+[[ "$(grep -c 'launchctl unload' "$HOME/launchctl-call.log")" -eq 1 ]] || exit 1
 EOF
 
 	[ "$status" -eq 0 ]
