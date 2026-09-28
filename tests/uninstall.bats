@@ -574,7 +574,7 @@ EOF
     done
 }
 
-@test "stop_launch_services tries every root after one times out" {
+@test "stop_launch_services propagates an unload timeout after one scan" {
     mkdir -p "$HOME/Library/LaunchAgents"
 
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
@@ -596,7 +596,7 @@ EOF
         return 1
     }
     [[ "$output" == *"RC=124"* ]] || return 1
-    [[ "$(grep -c '^ROOT:' "$HOME/unload-roots.log" 2> /dev/null || true)" -eq 2 ]]
+    [[ "$(grep -c '^ROOT:' "$HOME/unload-roots.log" 2> /dev/null || true)" -eq 1 ]]
 }
 
 @test "batch uninstall names the app and step when a removal times out" {
@@ -2262,7 +2262,9 @@ EOF
     mkdir -p "$HOME/Library/LaunchAgents" \
         "$HOME/Applications/TestApp.app/Contents/MacOS"
     touch "$HOME/Applications/TestApp.app/Contents/MacOS/TestApp"
-    touch "$HOME/Library/LaunchAgents/com.example.TestApp.plist"
+    cat > "$HOME/Library/LaunchAgents/com.example.TestApp.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$HOME/Applications/TestApp.app/Contents/MacOS/TestApp</string></dict></plist>
+PLIST
     touch "$HOME/Library/LaunchAgents/com.example.TestApplication.plist"
     cat > "$HOME/Library/LaunchAgents/com.example.TestApp.helper.plist" <<PLIST
 <?xml version="1.0"?><plist version="1.0"><dict><key>ProgramArguments</key><array><string>$HOME/Applications/TestApp.app/Contents/MacOS/TestApp</string></array></dict></plist>
@@ -2297,6 +2299,8 @@ stop_launch_services "com.example.TestApp" "false" "$HOME/Applications/TestApp.a
 
 	grep -Fq "launchctl unload $HOME/Library/LaunchAgents/com.example.TestApp.plist" "$trace"
 	grep -Fq "launchctl unload $HOME/Library/LaunchAgents/com.example.TestApp.helper.plist" "$trace"
+	[[ "$(grep -Fc "launchctl unload $HOME/Library/LaunchAgents/com.example.TestApp.plist" "$trace")" -eq 1 ]] || exit 1
+	[[ "$(grep -Fc "launchctl unload $HOME/Library/LaunchAgents/com.example.TestApp.helper.plist" "$trace")" -eq 1 ]] || exit 1
 	! grep -Fq "com.example.TestApplication.plist" "$trace"
 	! grep -Fq "com.thirdparty.TestApp-other.plist" "$trace"
 	! grep -q "safe_remove" "$trace"

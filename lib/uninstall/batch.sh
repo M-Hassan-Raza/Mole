@@ -350,32 +350,52 @@ _uninstall_unload_launch_plists() {
     local scan_file=""
     scan_file=$(create_temp_file) || return 1
     local scan_rc=0
-    if [[ -n "$bundle_id" ]]; then
+    if [[ -n "$app_path" ]]; then
+        _mole_uninstall_materialize_find0 "$scan_file" "$root" \
+            -maxdepth 1 -name '*.plist' -print0 || scan_rc=$?
+    elif [[ -n "$bundle_id" ]]; then
         _mole_uninstall_materialize_find0 "$scan_file" "$root" \
             -maxdepth 1 \( -name "${bundle_id}.plist" -o \
             -name "${bundle_id}.*.plist" \) -print0 || scan_rc=$?
     else
-        _mole_uninstall_materialize_find0 "$scan_file" "$root" \
-            -maxdepth 1 -name '*.plist' -print0 || scan_rc=$?
+        rm -f -- "$scan_file" 2> /dev/null || true # SAFE: exact tracked temp file created above
+        return 0
     fi
     if [[ $scan_rc -ne 0 ]]; then
         rm -f -- "$scan_file" 2> /dev/null || true # SAFE: exact tracked temp file created above
         return "$scan_rc"
     fi
 
-    local plist
+    # Give bundle-ID candidates the first share of the common deadline. The
+    # path-owned pass then visits all other labels without unloading twice.
+    local -a phases=(path)
+    [[ -n "$bundle_id" ]] && phases=(bundle path)
+    [[ -z "$app_path" ]] && phases=(bundle)
+    local phase plist plist_name bundle_candidate
     local result_rc=0
-    while IFS= read -r -d '' plist; do
-        local unload_rc=0
-        unload_launch_plist "$plist" "$needs_sudo" \
-            "$_MOLE_UNINSTALL_DISCOVERY_DEADLINE" \
-            "$bundle_id" "$app_path" || unload_rc=$?
-        if [[ $unload_rc -ge 128 ]]; then
-            result_rc=$unload_rc
-            break
-        fi
-        mole_rc_timeout "$unload_rc" && result_rc=$unload_rc
-    done < "$scan_file"
+    for phase in "${phases[@]}"; do
+        while IFS= read -r -d '' plist; do
+            plist_name="${plist##*/}"
+            bundle_candidate=false
+            if [[ -n "$bundle_id" &&
+                ("$plist_name" == "$bundle_id.plist" ||
+                "$plist_name" == "$bundle_id."*.plist) ]]; then
+                bundle_candidate=true
+            fi
+            [[ "$phase" == bundle && "$bundle_candidate" != true ]] && continue
+            [[ "$phase" == path && "$bundle_candidate" == true ]] && continue
+            local unload_rc=0
+            unload_launch_plist "$plist" "$needs_sudo" \
+                "$_MOLE_UNINSTALL_DISCOVERY_DEADLINE" \
+                "$bundle_id" "$app_path" || unload_rc=$?
+            if [[ $unload_rc -ge 128 ]]; then
+                result_rc=$unload_rc
+                break
+            fi
+            mole_rc_timeout "$unload_rc" && result_rc=$unload_rc
+        done < "$scan_file"
+        [[ $result_rc -ge 128 ]] && break
+    done
     rm -f -- "$scan_file" 2> /dev/null || true # SAFE: exact tracked temp file created above
     if [[ $result_rc -ne 0 ]]; then
         return "$result_rc"
@@ -408,9 +428,8 @@ stop_launch_services() {
         return 0
     fi
 
-    # The bundle-id-keyed unloads below need a valid reverse-DNS id. The
-    # app-path scan still runs when a sibling guard demotes the id to unknown;
-    # only a program inside the selected bundle can authorize that teardown.
+    # An exact bundle-ID label or a program inside the selected bundle can
+    # authorize teardown. A demoted ID still permits the app-path check.
     local bundle_id_usable=true
     if [[ -z "$bundle_id" || "$bundle_id" == "unknown" ]]; then
         bundle_id_usable=false
@@ -426,39 +445,25 @@ stop_launch_services() {
     # one slow plist cannot leave another root's jobs loaded. Signals stop.
     local unload_timeout_rc=0
 
-    if [[ "$bundle_id_usable" == "true" ]] && [[ -d ~/Library/LaunchAgents ]]; then
-        _stop_launch_services_root \
-            "$HOME/Library/LaunchAgents" false "$bundle_id" || return $?
+    local launch_bundle_id=""
+    [[ "$bundle_id_usable" == "true" ]] && launch_bundle_id="$bundle_id"
+    if [[ -z "$launch_bundle_id" && -z "$app_path" ]]; then
+        return 0
     fi
 
-    if [[ "$bundle_id_usable" == "true" && "$has_system_files" == "true" && "${MOLE_TEST_MODE:-0}" != "1" && "${MOLE_TEST_NO_AUTH:-0}" != "1" ]]; then
+    if [[ -d ~/Library/LaunchAgents ]]; then
+        _stop_launch_services_root \
+            "$HOME/Library/LaunchAgents" false "$launch_bundle_id" "$app_path" || return $?
+    fi
+
+    if [[ "$has_system_files" == "true" && "${MOLE_TEST_MODE:-0}" != "1" && "${MOLE_TEST_NO_AUTH:-0}" != "1" ]]; then
         if [[ -d /Library/LaunchAgents ]]; then
             _stop_launch_services_root \
-                /Library/LaunchAgents true "$bundle_id" || return $?
+                /Library/LaunchAgents true "$launch_bundle_id" "$app_path" || return $?
         fi
         if [[ -d /Library/LaunchDaemons ]]; then
             _stop_launch_services_root \
-                /Library/LaunchDaemons true "$bundle_id" || return $?
-        fi
-    fi
-
-    # Scan for differently labeled agents whose actual launchd program is
-    # inside the selected bundle. Text mentions elsewhere in a plist do not
-    # authorize unloading it.
-    if [[ -n "$app_path" ]]; then
-        if [[ -d ~/Library/LaunchAgents ]]; then
-            _stop_launch_services_root \
-                "$HOME/Library/LaunchAgents" false "" "$app_path" || return $?
-        fi
-        if [[ "$has_system_files" == "true" && "${MOLE_TEST_MODE:-0}" != "1" && "${MOLE_TEST_NO_AUTH:-0}" != "1" ]]; then
-            if [[ -d /Library/LaunchAgents ]]; then
-                _stop_launch_services_root \
-                    /Library/LaunchAgents true "" "$app_path" || return $?
-            fi
-            if [[ -d /Library/LaunchDaemons ]]; then
-                _stop_launch_services_root \
-                    /Library/LaunchDaemons true "" "$app_path" || return $?
-            fi
+                /Library/LaunchDaemons true "$launch_bundle_id" "$app_path" || return $?
         fi
     fi
     return "$unload_timeout_rc"
