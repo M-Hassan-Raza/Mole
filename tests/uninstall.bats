@@ -1615,7 +1615,8 @@ PLIST
     cat > "$HOME/Library/LaunchAgents/com.thirdparty.stablehelper.plist" <<PLIST
 <?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$HOME/Applications/SharedName.app/Contents/MacOS/SharedName</string></dict></plist>
 PLIST
-    mole_test_fake_command launchctl 'if [[ "$1" == unload ]]; then printf "UNLOAD:%s\n" "$2" >> "$HOME/unload.log"; fi'
+    mole_test_fake_command launchctl \
+        "if [[ \"\$1\" == unload ]]; then printf 'UNLOAD:%s\\n' \"\$2\" >> \"\$HOME/unload.log\"; fi"
 
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
