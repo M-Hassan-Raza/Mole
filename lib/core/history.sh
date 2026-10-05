@@ -19,6 +19,7 @@ readonly MOLE_HISTORY_MAX_LIMIT=200
 
 declare -a HISTORY_SESSION_COMMANDS=()
 declare -a HISTORY_SESSION_RUN_IDS=()
+declare -a HISTORY_SESSION_AMBIGUOUS=()
 declare -a HISTORY_SESSION_STARTED_AT=()
 declare -a HISTORY_SESSION_ENDED_AT=()
 declare -a HISTORY_SESSION_ITEMS=()
@@ -41,6 +42,7 @@ declare -a HISTORY_DELETE_PATHS=()
 
 HISTORY_ACTIVE_COMMAND=""
 HISTORY_ACTIVE_RUN_ID=""
+HISTORY_ACTIVE_AMBIGUOUS=0
 HISTORY_ACTIVE_STARTED_AT=""
 HISTORY_ACTIVE_ENDED_AT=""
 HISTORY_ACTIVE_ITEMS=0
@@ -114,6 +116,7 @@ history_parse_limit() {
 history_reset_active_session() {
     HISTORY_ACTIVE_COMMAND=""
     HISTORY_ACTIVE_RUN_ID=""
+    HISTORY_ACTIVE_AMBIGUOUS=0
     HISTORY_ACTIVE_STARTED_AT=""
     HISTORY_ACTIVE_ENDED_AT=""
     HISTORY_ACTIVE_ITEMS=0
@@ -139,7 +142,7 @@ declare -a HISTORY_PARKED_SESSIONS=()
 history_park_active_session() {
     [[ -n "$HISTORY_ACTIVE_COMMAND" ]] || return 0
     local sep=$'\x1f'
-    HISTORY_PARKED_SESSIONS+=("${HISTORY_ACTIVE_COMMAND}${sep}${HISTORY_ACTIVE_RUN_ID}${sep}${HISTORY_ACTIVE_STARTED_AT}${sep}${HISTORY_ACTIVE_ENDED_AT}${sep}${HISTORY_ACTIVE_ITEMS}${sep}${HISTORY_ACTIVE_SIZE}${sep}${HISTORY_ACTIVE_REMOVED}${sep}${HISTORY_ACTIVE_TRASHED}${sep}${HISTORY_ACTIVE_SKIPPED}${sep}${HISTORY_ACTIVE_FAILED}${sep}${HISTORY_ACTIVE_REBUILT}${sep}${HISTORY_ACTIVE_OTHER}${sep}${HISTORY_ACTIVE_OPERATIONS}${sep}${HISTORY_ACTIVE_FAILED_TASKS}${sep}${HISTORY_ACTIVE_START_SEQ}${sep}${HISTORY_ACTIVE_MARKED}")
+    HISTORY_PARKED_SESSIONS+=("${HISTORY_ACTIVE_COMMAND}${sep}${HISTORY_ACTIVE_RUN_ID}${sep}${HISTORY_ACTIVE_AMBIGUOUS}${sep}${HISTORY_ACTIVE_STARTED_AT}${sep}${HISTORY_ACTIVE_ENDED_AT}${sep}${HISTORY_ACTIVE_ITEMS}${sep}${HISTORY_ACTIVE_SIZE}${sep}${HISTORY_ACTIVE_REMOVED}${sep}${HISTORY_ACTIVE_TRASHED}${sep}${HISTORY_ACTIVE_SKIPPED}${sep}${HISTORY_ACTIVE_FAILED}${sep}${HISTORY_ACTIVE_REBUILT}${sep}${HISTORY_ACTIVE_OTHER}${sep}${HISTORY_ACTIVE_OPERATIONS}${sep}${HISTORY_ACTIVE_FAILED_TASKS}${sep}${HISTORY_ACTIVE_START_SEQ}${sep}${HISTORY_ACTIVE_MARKED}")
     history_reset_active_session
 }
 
@@ -163,7 +166,7 @@ history_activate_session() {
     HISTORY_PARKED_SESSIONS=("${remaining[@]+"${remaining[@]}"}")
     [[ -n "$found" ]] || return 1
 
-    IFS=$'\x1f' read -r HISTORY_ACTIVE_COMMAND HISTORY_ACTIVE_RUN_ID HISTORY_ACTIVE_STARTED_AT \
+    IFS=$'\x1f' read -r HISTORY_ACTIVE_COMMAND HISTORY_ACTIVE_RUN_ID HISTORY_ACTIVE_AMBIGUOUS HISTORY_ACTIVE_STARTED_AT \
         HISTORY_ACTIVE_ENDED_AT HISTORY_ACTIVE_ITEMS HISTORY_ACTIVE_SIZE \
         HISTORY_ACTIVE_REMOVED HISTORY_ACTIVE_TRASHED HISTORY_ACTIVE_SKIPPED \
         HISTORY_ACTIVE_FAILED HISTORY_ACTIVE_REBUILT HISTORY_ACTIVE_OTHER \
@@ -229,10 +232,11 @@ history_finish_all_sessions() {
 
     local -a sorted_commands=() sorted_run_ids=() sorted_started=() sorted_ended=() sorted_items=() sorted_size=() sorted_removed=() sorted_trashed=()
     local -a sorted_skipped=() sorted_failed=() sorted_rebuilt=() sorted_other=() sorted_operations=() sorted_failed_tasks=()
-    local -a sorted_start_seq=()
+    local -a sorted_start_seq=() sorted_ambiguous=()
     for idx in "${order[@]}"; do
         sorted_commands+=("${HISTORY_SESSION_COMMANDS[$idx]}")
         sorted_run_ids+=("${HISTORY_SESSION_RUN_IDS[$idx]}")
+        sorted_ambiguous+=("${HISTORY_SESSION_AMBIGUOUS[$idx]}")
         sorted_started+=("${HISTORY_SESSION_STARTED_AT[$idx]}")
         sorted_ended+=("${HISTORY_SESSION_ENDED_AT[$idx]}")
         sorted_items+=("${HISTORY_SESSION_ITEMS[$idx]}")
@@ -249,6 +253,7 @@ history_finish_all_sessions() {
     done
     HISTORY_SESSION_COMMANDS=("${sorted_commands[@]}")
     HISTORY_SESSION_RUN_IDS=("${sorted_run_ids[@]}")
+    HISTORY_SESSION_AMBIGUOUS=("${sorted_ambiguous[@]}")
     HISTORY_SESSION_STARTED_AT=("${sorted_started[@]}")
     HISTORY_SESSION_ENDED_AT=("${sorted_ended[@]}")
     HISTORY_SESSION_ITEMS=("${sorted_items[@]}")
@@ -269,16 +274,24 @@ history_start_session() {
     local started_at="$2"
     local marked="${3:-0}"
     local run_id="${4:-}"
+    local ambiguous=0
 
     # A repeated start closes only that identity. Legacy logs can distinguish
     # commands but cannot identify overlapping invocations of one command.
     if history_activate_session "$command" "$run_id"; then
+        if [[ -z "$run_id" && "$marked" == 1 && "$HISTORY_ACTIVE_MARKED" == 1 ]]; then
+            # A missing end could mean interruption or overlap. The old format
+            # cannot tell which run owns later actions or end markers.
+            HISTORY_ACTIVE_AMBIGUOUS=1
+            ambiguous=1
+        fi
         history_finish_session
     fi
 
     history_reset_active_session
     HISTORY_ACTIVE_COMMAND="$command"
     HISTORY_ACTIVE_RUN_ID="$run_id"
+    HISTORY_ACTIVE_AMBIGUOUS=$ambiguous
     HISTORY_ACTIVE_STARTED_AT="$started_at"
     HISTORY_ACTIVE_MARKED="$marked"
     HISTORY_START_SEQ_COUNTER=$((HISTORY_START_SEQ_COUNTER + 1))
@@ -290,6 +303,7 @@ history_finish_session() {
 
     HISTORY_SESSION_COMMANDS+=("$HISTORY_ACTIVE_COMMAND")
     HISTORY_SESSION_RUN_IDS+=("$HISTORY_ACTIVE_RUN_ID")
+    HISTORY_SESSION_AMBIGUOUS+=("$HISTORY_ACTIVE_AMBIGUOUS")
     HISTORY_SESSION_STARTED_AT+=("$HISTORY_ACTIVE_STARTED_AT")
     HISTORY_SESSION_ENDED_AT+=("$HISTORY_ACTIVE_ENDED_AT")
     HISTORY_SESSION_ITEMS+=("$HISTORY_ACTIVE_ITEMS")
@@ -389,6 +403,17 @@ history_parse_session_end() {
     history_finish_unmarked_sessions "$HISTORY_LOG_COMMAND"
     if ! history_activate_session "$HISTORY_LOG_COMMAND" "$HISTORY_LOG_RUN_ID"; then
         history_start_session "$HISTORY_LOG_COMMAND" "$ended_at" 0 "$HISTORY_LOG_RUN_ID"
+        if [[ -z "$HISTORY_LOG_RUN_ID" ]]; then
+            # A second legacy end after ambiguous starts cannot be paired with
+            # either start. Preserve the marker without claiming attribution.
+            local idx
+            for ((idx = ${#HISTORY_SESSION_COMMANDS[@]} - 1; idx >= 0; idx--)); do
+                [[ "${HISTORY_SESSION_COMMANDS[$idx]}" == "$HISTORY_LOG_COMMAND" &&
+                    -z "${HISTORY_SESSION_RUN_IDS[$idx]}" ]] || continue
+                HISTORY_ACTIVE_AMBIGUOUS=${HISTORY_SESSION_AMBIGUOUS[$idx]}
+                break
+            done
+        fi
     fi
 
     HISTORY_ACTIVE_ENDED_AT="$ended_at"
@@ -423,6 +448,7 @@ history_reset_sessions() {
     HISTORY_PARKED_SESSIONS=()
     HISTORY_SESSION_COMMANDS=()
     HISTORY_SESSION_RUN_IDS=()
+    HISTORY_SESSION_AMBIGUOUS=()
     HISTORY_SESSION_STARTED_AT=()
     HISTORY_SESSION_ENDED_AT=()
     HISTORY_SESSION_ITEMS=()
@@ -620,6 +646,9 @@ history_render_text() {
             if [[ "$failed_tasks" -gt 0 ]]; then
                 count_text+=", $failed_tasks optimize tasks failed"
             fi
+            if [[ "${HISTORY_SESSION_AMBIGUOUS[$idx]}" == 1 ]]; then
+                count_text+=", legacy run attribution uncertain"
+            fi
             [[ -z "$ended" ]] && ended="not ended"
             printf '  %-10s %s, %s items, %s\n' "$command" "$started" "$items" "$size"
             printf '             %s, ended %s\n' "$count_text" "$ended"
@@ -667,6 +696,10 @@ history_render_json_sessions() {
             printf '    {\n'
             history_json_string_field "      " "command" "${HISTORY_SESSION_COMMANDS[$idx]}"
             history_json_string_field "      " "run_id" "${HISTORY_SESSION_RUN_IDS[$idx]}"
+            local attribution=command
+            [[ -n "${HISTORY_SESSION_RUN_IDS[$idx]}" ]] && attribution=run
+            [[ "${HISTORY_SESSION_AMBIGUOUS[$idx]}" == 1 ]] && attribution=ambiguous
+            history_json_string_field "      " "attribution" "$attribution"
             history_json_string_field "      " "started_at" "${HISTORY_SESSION_STARTED_AT[$idx]}"
             history_json_string_field "      " "ended_at" "${HISTORY_SESSION_ENDED_AT[$idx]}"
             history_json_number_field "      " "items" "${HISTORY_SESSION_ITEMS[$idx]}"

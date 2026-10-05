@@ -65,6 +65,8 @@ assert data["sessions"][0]["command"] == "purge"
 assert data["sessions"][1]["command"] == "clean"
 assert data["sessions"][1]["actions"]["trashed"] == 1
 assert data["sessions"][1]["actions"]["failed"] == 1
+assert all(s["run_id"] == "" for s in data["sessions"])
+assert all(s["attribution"] == "command" for s in data["sessions"])
 assert data["deletions"][0]["mode"] == "permanent"
 assert data["deletions"][0]["size_kb"] == 10
 assert data["deletions"][1]["path"] == "/tmp/Old App.app"
@@ -266,6 +268,7 @@ try:
     sessions = json.loads(result.stdout)["sessions"]
     assert len(sessions) == 2, sessions
     assert all(s["run_id"] for s in sessions), sessions
+    assert all(s["attribution"] == "run" for s in sessions), sessions
     assert sessions[0]["run_id"] != sessions[1]["run_id"], sessions
     first, second = sorted(sessions, key=lambda s: s["size"])
     assert first["actions"]["removed"] == 1, first
@@ -281,6 +284,30 @@ finally:
         writer.wait(timeout=10)
 PY
     [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}
+
+@test "mo history marks ambiguous legacy runs without inventing identities or dropping actions" {
+    cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
+# ========== clean session started at 2026-05-24 10:00:00 ==========
+[2026-05-24 10:00:01] [clean] REMOVED /tmp/first (1KB)
+# ========== clean session started at 2026-05-24 10:01:00 ==========
+[2026-05-24 10:01:01] [clean] FAILED /tmp/second (permission denied)
+# ========== clean session ended at 2026-05-24 10:02:00, 0 items, 0B ==========
+# ========== clean session ended at 2026-05-24 10:03:00, 1 items, 1KB ==========
+EOF
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert all(s["run_id"] == "" for s in sessions), sessions
+assert all(s["attribution"] == "ambiguous" for s in sessions), sessions
+assert sum(s["actions"]["removed"] for s in sessions) == 1, sessions
+assert sum(s["actions"]["failed"] for s in sessions) == 1, sessions
+'
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"legacy run attribution uncertain"* ]] || return 1
 }
 
 @test "mo history orders sessions started in the same second by their markers" {
