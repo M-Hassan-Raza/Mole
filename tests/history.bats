@@ -201,6 +201,88 @@ assert uninstall["actions"]["trashed"] == 1, uninstall
 '
 }
 
+@test "operation history keeps overlapping runs and their child-shell actions apart" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" python3 <<'PY'
+import json
+import os
+import select
+import subprocess
+
+root = os.environ["PROJECT_ROOT"]
+script = r'''
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+get_timestamp() { printf '2026-05-24 10:00:00\n'; }
+log_operation_session_start clean
+printf 'ready\n'
+while IFS= read -r step; do
+    case "$step" in
+        removed) log_operation clean REMOVED /tmp/first 1KB ;;
+        trashed) log_operation clean TRASHED /tmp/second 2KB ;;
+        worker)
+            /bin/bash --noprofile --norc -c '
+                source "$PROJECT_ROOT/lib/core/common.sh"
+                log_operation clean SKIPPED /tmp/worker whitelist
+            '
+            ;;
+        end-first) log_operation_session_end clean 1 1; exit ;;
+        end-second) log_operation_session_end clean 1 2; exit ;;
+    esac
+    printf 'ready\n'
+done
+'''
+
+def ready(writer):
+    assert select.select([writer.stdout], [], [], 10)[0], "writer stalled"
+    assert writer.stdout.readline() == "ready\n", "writer failed"
+
+def step(writer, action, final=False):
+    writer.stdin.write(action + "\n")
+    writer.stdin.flush()
+    if final:
+        assert writer.wait(timeout=10) == 0
+    else:
+        ready(writer)
+
+writers = []
+try:
+    for _ in range(2):
+        writer = subprocess.Popen(
+            ["/bin/bash", "--noprofile", "--norc", "-c", script],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+        )
+        writers.append(writer)
+        ready(writer)
+    first, second = writers
+    step(first, "removed")
+    step(second, "trashed")
+    step(first, "worker")
+    step(second, "end-second", final=True)
+    step(first, "end-first", final=True)
+    result = subprocess.run(
+        [root + "/mole", "history", "--json"],
+        check=True, capture_output=True, text=True, timeout=10,
+    )
+    sessions = json.loads(result.stdout)["sessions"]
+    assert len(sessions) == 2, sessions
+    assert all(s["run_id"] for s in sessions), sessions
+    assert sessions[0]["run_id"] != sessions[1]["run_id"], sessions
+    first, second = sorted(sessions, key=lambda s: s["size"])
+    assert first["actions"]["removed"] == 1, first
+    assert first["actions"]["skipped"] == 1, first
+    assert first["actions"]["trashed"] == 0, first
+    assert second["actions"]["trashed"] == 1, second
+    assert second["operation_count"] == 1, second
+    assert all(s["ended_at"] for s in sessions), sessions
+finally:
+    for writer in writers:
+        if writer.poll() is None:
+            writer.kill()
+        writer.wait(timeout=10)
+PY
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+}
+
 @test "mo history orders sessions started in the same second by their markers" {
     cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
 # ========== clean session started at 2026-05-24 10:00:00 ==========
