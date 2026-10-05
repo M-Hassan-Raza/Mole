@@ -29,10 +29,12 @@ setup() {
 
 run_perform_cleanup_with() {
     export SECTION_RC="$1"
-    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" \
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_DRY_RUN="${2:-0}" \
         /bin/bash --noprofile --norc << 'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/bin/clean.sh"
+: > "$OPERATIONS_LOG_FILE"
+log_operation_session_start clean
 # Stub every section so perform_cleanup never scans the real machine.
 for fn in clean_user_essentials clean_finder_metadata clean_app_caches \
     clean_browsers run_cloud_and_office_cleanup clean_developer_tools \
@@ -93,7 +95,29 @@ EOF
     [ "$status" -eq 124 ]
     [[ "$output" == *"Cleanup cancelled"* ]] || return 1
     [[ "$output" == *"timed out (exit 124)"* ]] || return 1
-    [[ "$output" == *"Remaining cleanup was skipped"* ]]
+    [[ "$output" == *"Remaining cleanup was skipped"* ]] || return 1
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 1 and sessions[0]["outcome"] == "cancelled", sessions
+assert sessions[0]["mode"] == "run", sessions
+'
+}
+
+@test "completed cleanup previews are recorded as previews in history" {
+    run_perform_cleanup_with 0 1
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"Dry run complete"* ]] || return 1
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 1, sessions
+assert sessions[0]["outcome"] == "completed" and sessions[0]["mode"] == "dry-run", sessions
+'
 }
 
 @test "a timeout names the cancelled step in the summary and mole.log" {
@@ -141,7 +165,15 @@ EOF
 
     [ "$status" -eq 130 ]
     [[ "$output" == *"Cleanup interrupted"* ]] || return 1
-    [[ "$output" == *"was interrupted (exit 130)"* ]]
+    [[ "$output" == *"was interrupted (exit 130)"* ]] || return 1
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 1 and sessions[0]["outcome"] == "interrupted", sessions
+assert sessions[0]["mode"] == "run", sessions
+'
 }
 
 @test "external volume scan failure makes the command incomplete" {
@@ -150,6 +182,8 @@ EOF
         /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/bin/clean.sh"
+: > "$OPERATIONS_LOG_FILE"
+log_operation_session_start clean
 EXTERNAL_VOLUME_TARGET="$HOME/External"
 clean_external_volume_target() {
     echo "EXTERNAL_SCAN_FAILED"
@@ -170,6 +204,15 @@ EOF
     [[ "$output" != *"Cleanup complete"* ]] || return 1
     [[ "$output" != *"system already clean"* ]] || return 1
     [[ "$output" != *"System was already clean"* ]] || return 1
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 1 and sessions[0]["outcome"] == "incomplete", sessions
+assert sessions[0]["mode"] == "run", sessions
+'
+
 }
 
 # Exercise the real external-volume and Finder-metadata helpers through the

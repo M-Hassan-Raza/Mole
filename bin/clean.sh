@@ -1853,7 +1853,9 @@ perform_cleanup() {
 
     local summary_heading=""
     local summary_status="success"
+    local cleanup_outcome="completed"
     if mole_rc_timeout "$cleanup_cancel_rc"; then
+        cleanup_outcome="cancelled"
         if [[ "$DRY_RUN" == "true" ]]; then
             summary_heading="Dry run cancelled"
         else
@@ -1861,6 +1863,7 @@ perform_cleanup() {
         fi
         summary_status="warning"
     elif [[ $cleanup_cancel_rc -ge 128 ]]; then
+        cleanup_outcome="interrupted"
         if [[ "$DRY_RUN" == "true" ]]; then
             summary_heading="Dry run interrupted"
         else
@@ -1868,6 +1871,7 @@ perform_cleanup() {
         fi
         summary_status="warning"
     elif [[ $cleanup_cancel_rc -ne 0 ]]; then
+        cleanup_outcome="incomplete"
         if [[ "$DRY_RUN" == "true" ]]; then
             summary_heading="Dry run incomplete"
         else
@@ -2062,7 +2066,7 @@ perform_cleanup() {
     fi
 
     # Log session end with summary
-    log_operation_session_end "clean" "$files_cleaned" "$total_size_cleaned"
+    log_operation_session_end "clean" "$files_cleaned" "$total_size_cleaned" "$cleanup_outcome"
 
     print_summary_block "$summary_heading" "${summary_details[@]}"
     printf '\n'

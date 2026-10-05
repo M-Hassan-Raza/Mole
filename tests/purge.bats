@@ -2234,41 +2234,68 @@ EOF
 	[[ "$output" != *"UNEXPECTED_REMOVE:"* ]] || return 1
 }
 
-@test "perform_purge: suppresses completion summary for non-completed outcomes" {
-	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SKIP_MAIN=1 /bin/bash --noprofile --norc <<'EOF'
+@test "perform_purge: records early outcomes without a completion summary" {
+    local outcome expected_rc
+    for outcome in cancelled no_candidates scan_failed; do
+        expected_rc=0
+        [[ "$outcome" == scan_failed ]] && expected_rc=1
+        run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SKIP_MAIN=1 \
+            MOLE_DRY_RUN=1 TEST_OUTCOME="$outcome" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/bin/purge.sh"
-
+: > "$OPERATIONS_LOG_FILE"
+start_purge
 clean_project_artifacts() {
-	PURGE_RUN_OUTCOME="cancelled"
-	return 0
+    PURGE_RUN_OUTCOME="$TEST_OUTCOME"
 }
-print_summary_block() {
-	printf 'UNEXPECTED_SUMMARY\n'
-}
-
+print_summary_block() { printf 'UNEXPECTED_SUMMARY\n'; }
 perform_purge </dev/null
-printf 'PERFORM_RETURNED\n'
 EOF
-
-	[ "$status" -eq 0 ] || return 1
-	[[ "$output" == *"PERFORM_RETURNED"* ]] || return 1
-	[[ "$output" != *"UNEXPECTED_SUMMARY"* ]] || return 1
+        [ "$status" -eq "$expected_rc" ] || { echo "$output"; return 1; }
+        [[ "$output" != *"UNEXPECTED_SUMMARY"* ]] || return 1
+        run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+        [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+        printf '%s\n' "$output" | TEST_OUTCOME="$outcome" python3 -c '
+import json, os, sys
+sessions = json.load(sys.stdin)["sessions"]
+expected = {"cancelled": "cancelled", "no_candidates": "completed", "scan_failed": "incomplete"}[os.environ["TEST_OUTCOME"]]
+assert len(sessions) == 1 and sessions[0]["ended_at"], sessions
+assert sessions[0]["outcome"] == expected and sessions[0]["mode"] == "dry-run", sessions
+assert sessions[0]["items"] == 0 and sessions[0]["size"] == "0B", sessions
+'
+    done
 }
 
-@test "perform_purge: preserves errexit for unexpected cleanup failures" {
-	run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SKIP_MAIN=1 /bin/bash --noprofile --norc <<'EOF'
+@test "perform_purge: failures leave history unfinished and preserve errexit" {
+    local failure_rc
+    for failure_rc in 7 124; do
+        run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SKIP_MAIN=1 \
+            TEST_FAILURE_RC="$failure_rc" /bin/bash --noprofile --norc <<'EOF'
 set -euo pipefail
 source "$PROJECT_ROOT/bin/purge.sh"
-
-clean_project_artifacts() { return 7; }
-
+: > "$OPERATIONS_LOG_FILE"
+start_purge
+clean_project_artifacts() {
+    PURGE_RUN_OUTCOME=cancelled
+    log_operation purge SKIPPED /tmp/kept timeout
+    return "$TEST_FAILURE_RC"
+}
 perform_purge </dev/null
 printf 'UNEXPECTED_CONTINUATION\n'
 EOF
-
-	[ "$status" -eq 7 ] || return 1
-	[[ "$output" != *"UNEXPECTED_CONTINUATION"* ]] || return 1
+        [ "$status" -eq "$failure_rc" ] || { echo "$output"; return 1; }
+        [[ "$output" != *"UNEXPECTED_CONTINUATION"* ]] || return 1
+        run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+        [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+        printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 1 and sessions[0]["run_id"], sessions
+assert not sessions[0]["ended_at"], sessions
+assert sessions[0]["outcome"] == "unknown" and sessions[0]["mode"] == "unknown", sessions
+assert sessions[0]["actions"]["skipped"] == 1, sessions
+'
+    done
 }
 
 @test "perform_purge: incomplete cleanup is a failed command, not an empty inventory" {

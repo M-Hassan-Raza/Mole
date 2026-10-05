@@ -241,21 +241,6 @@ perform_purge() {
     trap - INT TERM
     cleanup_monitor
 
-    case "$purge_outcome" in
-        no_candidates | cancelled) return 0 ;;
-        scan_failed) return 1 ;;
-        completed | incomplete) ;;
-        *)
-            log_error "Unknown purge outcome: $purge_outcome"
-            return 1
-            ;;
-    esac
-
-    # Final summary (matching clean.sh format)
-    echo ""
-
-    local summary_heading="Purge complete"
-    local -a summary_details=()
     local total_size_cleaned=0
     local total_items_cleaned=0
 
@@ -268,6 +253,36 @@ perform_purge() {
         total_items_cleaned=$(cat "$stats_dir/purge_count" 2> /dev/null || echo "0")
         rm -f "$stats_dir/purge_count"
     fi
+
+    local history_outcome="$purge_outcome" early_exit=""
+    case "$purge_outcome" in
+        no_candidates)
+            history_outcome=completed
+            early_exit=0
+            ;;
+        cancelled) early_exit=0 ;;
+        scan_failed)
+            history_outcome=incomplete
+            early_exit=1
+            ;;
+        completed | incomplete) ;;
+        *)
+            log_error "Unknown purge outcome: $purge_outcome"
+            return 1
+            ;;
+    esac
+
+    # Finalize every handled outcome. Signals and sink timeouts exit above.
+    log_operation_session_end "purge" "$total_items_cleaned" "$total_size_cleaned" "$history_outcome"
+    if [[ -n "$early_exit" ]]; then
+        return "$early_exit"
+    fi
+
+    # Final summary (matching clean.sh format)
+    echo ""
+
+    local summary_heading="Purge complete"
+    local -a summary_details=()
 
     if [[ "${MOLE_DRY_RUN:-0}" == "1" ]]; then
         summary_heading="Dry run complete - no changes made"
@@ -298,9 +313,6 @@ perform_purge() {
     if [[ "$purge_outcome" == "incomplete" ]]; then
         summary_details+=("Some artifacts were skipped or could not be processed.")
     fi
-
-    # Log session end
-    log_operation_session_end "purge" "${total_items_cleaned:-0}" "${total_size_cleaned:-0}"
 
     print_summary_block "$summary_heading" "${summary_details[@]}"
     printf '\n'
