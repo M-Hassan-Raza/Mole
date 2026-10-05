@@ -207,9 +207,62 @@ assert data["sessions"][1]["actions"]["trashed"] == 1
 assert data["sessions"][1]["actions"]["failed"] == 1
 assert all(s["run_id"] == "" for s in data["sessions"])
 assert all(s["attribution"] == "command" for s in data["sessions"])
+assert all(s["outcome"] == "unknown" and s["mode"] == "unknown" for s in data["sessions"])
 assert data["deletions"][0]["mode"] == "permanent"
 assert data["deletions"][0]["size_kb"] == 10
 assert data["deletions"][1]["path"] == "/tmp/Old App.app"
+'
+}
+
+@test "history round-trips explicit terminal outcomes and preview mode" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+for dry_run in 0 1; do
+    export MOLE_DRY_RUN="$dry_run"
+    for outcome in completed incomplete cancelled interrupted; do
+        log_operation_session_start clean
+        log_operation clean SKIPPED /tmp/kept whitelist
+        log_operation_session_end clean 1 2 "$outcome"
+    done
+done
+EOF
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+expected = {(outcome, mode) for outcome in ("completed", "incomplete", "cancelled", "interrupted") for mode in ("run", "dry-run")}
+assert len(sessions) == 8 and {(s["outcome"], s["mode"]) for s in sessions} == expected, sessions
+assert all(s["size"] == "2KB" and s["items"] == 1 and s["ended_at"] for s in sessions), sessions
+assert all(s["run_id"] and s["actions"]["skipped"] == 1 for s in sessions), sessions
+'
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    [[ "$output" == *"completed (dry-run)"* && "$output" == *"interrupted (run)"* ]] || return 1
+}
+
+@test "malformed terminal metadata cannot close an identified run" {
+    cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
+# ========== clean run=bad-outcome session started at 2026-05-24 10:00:00 ==========
+[2026-05-24 10:00:01] [clean run=bad-outcome] SKIPPED /tmp/one (whitelist)
+# ========== clean run=bad-outcome session ended at 2026-05-24 10:00:02, 1 items, 1KB, outcome=bogus, mode=run ==========
+# ========== clean run=bad-mode session started at 2026-05-24 10:01:00 ==========
+[2026-05-24 10:01:01] [clean run=bad-mode] SKIPPED /tmp/two (whitelist)
+# ========== clean run=bad-mode session ended at 2026-05-24 10:01:02, 1 items, 1KB, outcome=completed, mode=bogus ==========
+# ========== clean run=missing-mode session started at 2026-05-24 10:02:00 ==========
+[2026-05-24 10:02:01] [clean run=missing-mode] SKIPPED /tmp/three (whitelist)
+# ========== clean run=missing-mode session ended at 2026-05-24 10:02:02, 1 items, 1KB, outcome=completed ==========
+EOF
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 3 and all(not s["ended_at"] for s in sessions), sessions
+assert all(s["outcome"] == "unknown" and s["mode"] == "unknown" for s in sessions), sessions
+assert all(s["run_id"] and s["actions"]["skipped"] == 1 for s in sessions), sessions
 '
 }
 

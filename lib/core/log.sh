@@ -10,6 +10,9 @@ if [[ -n "${MOLE_LOG_LOADED:-}" ]]; then
 fi
 readonly MOLE_LOG_LOADED=1
 
+# shellcheck source=lib/core/operation_log.sh
+source "$(dirname "${BASH_SOURCE[0]}")/operation_log.sh"
+
 # Ensure base.sh is loaded for colors and icons
 if [[ -z "${MOLE_BASE_LOADED:-}" ]]; then
     _MOLE_CORE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -339,6 +342,15 @@ log_operation_session_end() {
     if [[ "$command" == "$_MOLE_OPLOG_RUN_COMMAND" ]]; then
         export _MOLE_OPLOG_RUN_ID="" _MOLE_OPLOG_RUN_COMMAND="" _MOLE_OPLOG_RUN_DRY=""
     fi
+    # Optional terminal metadata comes from the command's existing outcome.
+    # Ends without an outcome retain their format and stay unknown in history.
+    local outcome="${4:-}" metadata=""
+    if [[ -n "$outcome" ]]; then
+        local mode=run
+        [[ "${MOLE_DRY_RUN:-0}" == 1 ]] && mode=dry-run
+        operation_log_result_valid "$outcome" "$mode" || return 1
+        metadata=", outcome=$outcome, mode=$mode"
+    fi
     oplog_enabled || return 0
 
     local items="${2:-0}"
@@ -355,7 +367,7 @@ log_operation_session_end() {
 
     append_log_line \
         "$OPERATIONS_LOG_FILE" \
-        "# ========== $log_command session ended at $timestamp, $items items, $size_human =========="
+        "# ========== $log_command session ended at $timestamp, $items items, $size_human$metadata =========="
 }
 
 # Enhanced debug logging for operations

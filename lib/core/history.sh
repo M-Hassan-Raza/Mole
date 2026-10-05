@@ -8,6 +8,9 @@ if [[ -n "${MOLE_HISTORY_LOADED:-}" ]]; then
 fi
 readonly MOLE_HISTORY_LOADED=1
 
+# shellcheck source=lib/core/operation_log.sh
+source "$(dirname "${BASH_SOURCE[0]}")/operation_log.sh"
+
 if [[ -z "${MOLE_BASE_LOADED:-}" ]]; then
     _MOLE_CORE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     # shellcheck source=lib/core/base.sh
@@ -20,6 +23,8 @@ readonly MOLE_HISTORY_MAX_LIMIT=200
 declare -a HISTORY_SESSION_COMMANDS=()
 declare -a HISTORY_SESSION_RUN_IDS=()
 declare -a HISTORY_SESSION_AMBIGUOUS=()
+declare -a HISTORY_SESSION_OUTCOMES=()
+declare -a HISTORY_SESSION_MODES=()
 declare -a HISTORY_SESSION_STARTED_AT=()
 declare -a HISTORY_SESSION_ENDED_AT=()
 declare -a HISTORY_SESSION_ITEMS=()
@@ -267,11 +272,13 @@ history_finish_all_sessions() {
 
     local -a sorted_commands=() sorted_run_ids=() sorted_started=() sorted_ended=() sorted_items=() sorted_size=() sorted_removed=() sorted_trashed=()
     local -a sorted_skipped=() sorted_failed=() sorted_rebuilt=() sorted_other=() sorted_operations=() sorted_failed_tasks=()
-    local -a sorted_start_seq=() sorted_ambiguous=()
+    local -a sorted_start_seq=() sorted_ambiguous=() sorted_outcomes=() sorted_modes=()
     for idx in "${order[@]}"; do
         sorted_commands+=("${HISTORY_SESSION_COMMANDS[$idx]}")
         sorted_run_ids+=("${HISTORY_SESSION_RUN_IDS[$idx]}")
         sorted_ambiguous+=("${HISTORY_SESSION_AMBIGUOUS[$idx]}")
+        sorted_outcomes+=("${HISTORY_SESSION_OUTCOMES[$idx]}")
+        sorted_modes+=("${HISTORY_SESSION_MODES[$idx]}")
         sorted_started+=("${HISTORY_SESSION_STARTED_AT[$idx]}")
         sorted_ended+=("${HISTORY_SESSION_ENDED_AT[$idx]}")
         sorted_items+=("${HISTORY_SESSION_ITEMS[$idx]}")
@@ -289,6 +296,8 @@ history_finish_all_sessions() {
     HISTORY_SESSION_COMMANDS=("${sorted_commands[@]}")
     HISTORY_SESSION_RUN_IDS=("${sorted_run_ids[@]}")
     HISTORY_SESSION_AMBIGUOUS=("${sorted_ambiguous[@]}")
+    HISTORY_SESSION_OUTCOMES=("${sorted_outcomes[@]}")
+    HISTORY_SESSION_MODES=("${sorted_modes[@]}")
     HISTORY_SESSION_STARTED_AT=("${sorted_started[@]}")
     HISTORY_SESSION_ENDED_AT=("${sorted_ended[@]}")
     HISTORY_SESSION_ITEMS=("${sorted_items[@]}")
@@ -348,9 +357,15 @@ history_start_session() {
 history_finish_session() {
     [[ -z "$HISTORY_ACTIVE_COMMAND" ]] && return 0
 
+    # Only a valid end marker supplies terminal metadata. Open and older runs
+    # stay unknown; action counts are never used to guess their result.
+    local outcome="${1:-unknown}" mode="${2:-unknown}"
+
     HISTORY_SESSION_COMMANDS+=("$HISTORY_ACTIVE_COMMAND")
     HISTORY_SESSION_RUN_IDS+=("$HISTORY_ACTIVE_RUN_ID")
     HISTORY_SESSION_AMBIGUOUS+=("$HISTORY_ACTIVE_AMBIGUOUS")
+    HISTORY_SESSION_OUTCOMES+=("$outcome")
+    HISTORY_SESSION_MODES+=("$mode")
     HISTORY_SESSION_STARTED_AT+=("$HISTORY_ACTIVE_STARTED_AT")
     HISTORY_SESSION_ENDED_AT+=("$HISTORY_ACTIVE_ENDED_AT")
     HISTORY_SESSION_ITEMS+=("$HISTORY_ACTIVE_ITEMS")
@@ -425,6 +440,7 @@ history_parse_session_start() {
 history_parse_session_end() {
     local line="$1"
     local inner command rest ended_at tail items size
+    local outcome=unknown mode=unknown metadata
 
     case "$line" in
         "# ========== "*" session ended at "*" ==========") ;;
@@ -447,6 +463,15 @@ history_parse_session_end() {
         fi
     fi
 
+    if [[ "$size" == *", outcome="* ]]; then
+        metadata="${size#*, outcome=}"
+        size="${size%%, outcome=*}"
+        [[ "$metadata" == *", mode="* ]] || return 1
+        outcome="${metadata%%, mode=*}"
+        mode="${metadata#*, mode=}"
+        operation_log_result_valid "$outcome" "$mode" || return 1
+    fi
+
     history_finish_unmarked_sessions "$HISTORY_LOG_COMMAND"
     if ! history_activate_session "$HISTORY_LOG_COMMAND" "$HISTORY_LOG_RUN_ID"; then
         history_start_session "$HISTORY_LOG_COMMAND" "$ended_at" 0 "$HISTORY_LOG_RUN_ID"
@@ -455,7 +480,7 @@ history_parse_session_end() {
     HISTORY_ACTIVE_ENDED_AT="$ended_at"
     [[ "$items" =~ ^[0-9]+$ ]] && HISTORY_ACTIVE_ITEMS="$items"
     [[ -n "$size" ]] && HISTORY_ACTIVE_SIZE="$size"
-    history_finish_session
+    history_finish_session "$outcome" "$mode"
     return 0
 }
 
@@ -487,6 +512,8 @@ history_reset_sessions() {
     HISTORY_SESSION_COMMANDS=()
     HISTORY_SESSION_RUN_IDS=()
     HISTORY_SESSION_AMBIGUOUS=()
+    HISTORY_SESSION_OUTCOMES=()
+    HISTORY_SESSION_MODES=()
     HISTORY_SESSION_STARTED_AT=()
     HISTORY_SESSION_ENDED_AT=()
     HISTORY_SESSION_ITEMS=()
@@ -693,6 +720,9 @@ history_render_text() {
             if [[ "${HISTORY_SESSION_AMBIGUOUS[$idx]}" == 1 ]]; then
                 count_text+=", legacy run attribution uncertain"
             fi
+            if [[ "${HISTORY_SESSION_OUTCOMES[$idx]}" != unknown ]]; then
+                count_text+=", ${HISTORY_SESSION_OUTCOMES[$idx]} (${HISTORY_SESSION_MODES[$idx]})"
+            fi
             [[ -z "$ended" ]] && ended="not ended"
             printf '  %-10s %s, %s items, %s\n' "$command" "$started" "$items" "$size"
             printf '             %s, ended %s\n' "$count_text" "$ended"
@@ -748,6 +778,8 @@ history_render_json_sessions() {
             [[ -n "${HISTORY_SESSION_RUN_IDS[$idx]}" ]] && attribution=run
             [[ "${HISTORY_SESSION_AMBIGUOUS[$idx]}" == 1 ]] && attribution=ambiguous
             history_json_string_field "      " "attribution" "$attribution"
+            history_json_string_field "      " "outcome" "${HISTORY_SESSION_OUTCOMES[$idx]}"
+            history_json_string_field "      " "mode" "${HISTORY_SESSION_MODES[$idx]}"
             history_json_string_field "      " "started_at" "${HISTORY_SESSION_STARTED_AT[$idx]}"
             history_json_string_field "      " "ended_at" "${HISTORY_SESSION_ENDED_AT[$idx]}"
             history_json_number_field "      " "items" "${HISTORY_SESSION_ITEMS[$idx]}"
