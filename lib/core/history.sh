@@ -288,6 +288,18 @@ history_start_session() {
         history_finish_session
     fi
 
+    if [[ "$marked" != 1 && -z "$run_id" ]]; then
+        # Later unmarked actions and ends cannot be assigned to either run
+        # after overlapping legacy starts. A new start resets that uncertainty.
+        local idx
+        for ((idx = ${#HISTORY_SESSION_COMMANDS[@]} - 1; idx >= 0; idx--)); do
+            [[ "${HISTORY_SESSION_COMMANDS[$idx]}" == "$command" &&
+                -z "${HISTORY_SESSION_RUN_IDS[$idx]}" ]] || continue
+            ambiguous=${HISTORY_SESSION_AMBIGUOUS[$idx]}
+            break
+        done
+    fi
+
     history_reset_active_session
     HISTORY_ACTIVE_COMMAND="$command"
     HISTORY_ACTIVE_RUN_ID="$run_id"
@@ -403,17 +415,6 @@ history_parse_session_end() {
     history_finish_unmarked_sessions "$HISTORY_LOG_COMMAND"
     if ! history_activate_session "$HISTORY_LOG_COMMAND" "$HISTORY_LOG_RUN_ID"; then
         history_start_session "$HISTORY_LOG_COMMAND" "$ended_at" 0 "$HISTORY_LOG_RUN_ID"
-        if [[ -z "$HISTORY_LOG_RUN_ID" ]]; then
-            # A second legacy end after ambiguous starts cannot be paired with
-            # either start. Preserve the marker without claiming attribution.
-            local idx
-            for ((idx = ${#HISTORY_SESSION_COMMANDS[@]} - 1; idx >= 0; idx--)); do
-                [[ "${HISTORY_SESSION_COMMANDS[$idx]}" == "$HISTORY_LOG_COMMAND" &&
-                    -z "${HISTORY_SESSION_RUN_IDS[$idx]}" ]] || continue
-                HISTORY_ACTIVE_AMBIGUOUS=${HISTORY_SESSION_AMBIGUOUS[$idx]}
-                break
-            done
-        fi
     fi
 
     HISTORY_ACTIVE_ENDED_AT="$ended_at"

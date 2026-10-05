@@ -293,6 +293,7 @@ PY
 # ========== clean session started at 2026-05-24 10:01:00 ==========
 [2026-05-24 10:01:01] [clean] FAILED /tmp/second (permission denied)
 # ========== clean session ended at 2026-05-24 10:02:00, 0 items, 0B ==========
+[2026-05-24 10:02:30] [clean] REMOVED /tmp/late-first (1KB)
 # ========== clean session ended at 2026-05-24 10:03:00, 1 items, 1KB ==========
 EOF
     run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
@@ -302,7 +303,7 @@ import json, sys
 sessions = json.load(sys.stdin)["sessions"]
 assert all(s["run_id"] == "" for s in sessions), sessions
 assert all(s["attribution"] == "ambiguous" for s in sessions), sessions
-assert sum(s["actions"]["removed"] for s in sessions) == 1, sessions
+assert sum(s["actions"]["removed"] for s in sessions) == 2, sessions
 assert sum(s["actions"]["failed"] for s in sessions) == 1, sessions
 '
     run env HOME="$HOME" "$PROJECT_ROOT/mole" history
