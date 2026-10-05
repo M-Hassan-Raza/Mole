@@ -1763,10 +1763,9 @@ _batch_scan_app_details_impl() {
                 [[ -z "$survivor_name" ]] && continue
                 # Equality catches the display-name collapse. The substring
                 # direction catches the inverse case: uninstalling "Foo.app"
-                # while "Foo-beta.app" survives. Downstream matchers are
-                # substring-based (the LaunchAgents scan globs
-                # "*<name>*.plist"), so a discovery name contained anywhere
-                # in a survivor identifier can still reach survivor data.
+                # while "Foo-beta.app" survives. Name-based leftover matchers
+                # use substrings, so a discovery name contained anywhere in a
+                # survivor identifier can still reach survivor data.
                 # Reverse containment (survivor inside discovery) stays
                 # allowed: patterns keyed on the longer "Foo-beta" cannot
                 # match the survivor's shorter "Foo"-keyed paths.

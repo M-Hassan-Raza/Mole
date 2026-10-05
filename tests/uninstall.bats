@@ -2172,13 +2172,16 @@ printf '\n' | batch_uninstall_applications > /dev/null 2>&1
 
 # Case 4: inverse direction: uninstalling the base-named install while the
 # hyphen-suffixed sibling survives. The discovery name ("RevBase") is
-# contained in the survivor's identifiers ("RevBase-beta"), and downstream
-# matchers are substring-based (the LaunchAgents scan globs "*<name>*.plist"),
-# so name discovery must be suppressed entirely.
-mkdir -p "$HOME/Applications/RevBase.app" "$HOME/Applications/RevBase-beta.app"
+# contained in the survivor's identifiers ("RevBase-beta"), so shared
+# name-based leftovers stay. A shared bundle-ID agent bound to the survivor
+# must also stay loaded.
+mkdir -p "$HOME/Applications/RevBase.app" "$HOME/Applications/RevBase-beta.app/Contents/MacOS"
 mkdir -p "$HOME/Library/Application Support/RevBase"
 mkdir -p "$HOME/Library/LaunchAgents"
-touch "$HOME/Library/LaunchAgents/com.example.RevBase-beta.agent.plist"
+touch "$HOME/Applications/RevBase-beta.app/Contents/MacOS/RevBase"
+cat > "$HOME/Library/LaunchAgents/com.example.revbase.plist" <<PLIST
+<?xml version="1.0"?><plist version="1.0"><dict><key>Program</key><string>$HOME/Applications/RevBase-beta.app/Contents/MacOS/RevBase</string></dict></plist>
+PLIST
 
 apps_data=(
 	"0|$HOME/Applications/RevBase.app|RevBase|com.example.revbase|0|Never|0"
@@ -2190,7 +2193,8 @@ printf '\n' | batch_uninstall_applications > /dev/null 2>&1
 
 [[ ! -d "$HOME/Applications/RevBase.app" ]] || { echo "WRONG: selected base bundle preserved (case 4)"; exit 1; }
 [[ -d "$HOME/Applications/RevBase-beta.app" ]] || { echo "WRONG: suffixed survivor removed (case 4)"; exit 1; }
-[[ -f "$HOME/Library/LaunchAgents/com.example.RevBase-beta.agent.plist" ]] || { echo "WRONG: survivor launch agent removed (case 4)"; exit 1; }
+[[ -f "$HOME/Library/LaunchAgents/com.example.revbase.plist" ]] || { echo "WRONG: survivor launch agent removed (case 4)"; exit 1; }
+! grep -q "com.example.revbase.plist" "$HOME/unload.log" 2> /dev/null || { echo "WRONG: survivor's agent unloaded (case 4)"; cat "$HOME/unload.log"; exit 1; }
 [[ -d "$HOME/Library/Application Support/RevBase" ]] || { echo "WRONG: shared app support removed (case 4)"; exit 1; }
 [[ ! -f "$HOME/login.log" ]] || { echo "WRONG: login item removed (case 4)"; exit 1; }
 
