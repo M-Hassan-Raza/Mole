@@ -2649,6 +2649,11 @@ _batch_execute_removals() {
                 echo -e "${GREEN}${ICON_SUCCESS}${NC} [$current_index/${#app_details[@]}] ${app_name}"
             fi
 
+            # Preview survivors are expected; only recorded refusals need explanation.
+            if is_uninstall_dry_run && [[ ${#_MOLE_UNINSTALL_REFUSAL_PATHS[@]} -gt 0 ]]; then
+                leftover_paths=("${_MOLE_UNINSTALL_REFUSAL_PATHS[@]}")
+            fi
+
             # Warn about files that could not be removed and exclude them from freed total.
             if [[ ${#leftover_paths[@]} -gt 0 ]]; then
                 for _lpath in "${leftover_paths[@]}"; do
