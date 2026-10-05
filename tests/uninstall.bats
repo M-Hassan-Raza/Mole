@@ -5358,6 +5358,50 @@ SCRIPT
     [ "$status" -eq 0 ] || { echo "$output"; cat "$HOME/output.log"; return 1; }
 }
 
+@test "batch uninstall explains changed agent ownership once after the cleanup phase" {
+    mkdir -p "$HOME/Applications/OwnedApp.app/Contents/MacOS" "$HOME/Library/LaunchAgents"
+    touch "$HOME/Applications/OwnedApp.app/Contents/MacOS/OwnedApp"
+    cat > "$HOME/Applications/OwnedApp.app/Contents/Info.plist" <<'PLIST'
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.example.owned</string></dict></plist>
+PLIST
+    cat > "$HOME/Library/LaunchAgents/com.thirdparty.owned.plist" <<PLIST
+<plist version="1.0"><dict><key>Program</key><string>$HOME/Applications/OwnedApp.app/Contents/MacOS/OwnedApp</string></dict></plist>
+PLIST
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'SCRIPT'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+source "$PROJECT_ROOT/lib/uninstall/batch.sh"
+source "$PROJECT_ROOT/tests/helpers/uninstall.bash"
+mole_test_isolate_uninstall_inventory
+export MOLE_TEST_TRASH_DIR="$HOME/Trash"
+brew() { :; }
+request_sudo_access() { :; }
+start_inline_spinner() { :; }
+stop_inline_spinner() { :; }
+enter_alt_screen() { :; }
+leave_alt_screen() { :; }
+hide_cursor() { :; }
+show_cursor() { :; }
+remove_apps_from_dock() { :; }
+pgrep() { return 1; }
+stop_launch_services() {
+    cat > "$HOME/Library/LaunchAgents/com.thirdparty.owned.plist" <<'PLIST'
+<plist version="1.0"><dict><key>Program</key><string>/bin/true</string></dict></plist>
+PLIST
+    printf 'OWNERSHIP_CHANGED\n'
+}
+unregister_app_bundle() { :; }
+selected_apps=("0|$HOME/Applications/OwnedApp.app|OwnedApp|com.example.owned|0|Never")
+files_cleaned=0 total_items=0 total_size_cleaned=0
+printf '\n' | batch_uninstall_applications
+[[ ! -e "$HOME/Applications/OwnedApp.app" && -f "$HOME/Library/LaunchAgents/com.thirdparty.owned.plist" ]] || exit 1
+SCRIPT
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"OWNERSHIP_CHANGED"* ]] || return 1
+    [[ "$output" == *"Kept (agent ownership unverified; review the plist): ~/Library/LaunchAgents/com.thirdparty.owned.plist"* ]] || return 1
+    [[ "$output" != *"Could not remove"* && "$output" != *"Kept $HOME/Library/LaunchAgents"* ]] || return 1
+}
+
 @test "batch uninstall explains actual refusal and clears it for the next app" {
     run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'SCRIPT'
 set -euo pipefail

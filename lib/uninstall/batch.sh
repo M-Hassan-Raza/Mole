@@ -2663,6 +2663,8 @@ _batch_execute_removals() {
                         protected) kept_label="Kept (protected by Mole)" ;;
                         live-cache) kept_label="Kept (app may be active)" ;;
                         access-denied) kept_label="macOS denied access" ;;
+                        ownership-unverified) kept_label="Kept (agent ownership unverified; review the plist)" ;;
+                        app-reappeared) kept_label="Kept (selected app path exists again; select the app again)" ;;
                     esac
                     echo -e "  ${YELLOW}${ICON_WARNING}${NC} $kept_label: ${_lpath/#$HOME/$tilde_display}"
                 done
