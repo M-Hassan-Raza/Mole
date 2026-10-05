@@ -402,6 +402,28 @@ assert sum(s["operation_count"] for s in sessions) == 3, sessions
 '
 }
 
+@test "uninstall signal cleanup ends its run once" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" MOLE_SKIP_MAIN=1 \
+        /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/bin/uninstall.sh"
+log_operation_session_start uninstall
+log_operation uninstall SKIPPED /tmp/kept whitelist
+kill -TERM "$$"
+EOF
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 1, sessions
+assert sessions[0]["run_id"] and sessions[0]["ended_at"], sessions
+assert sessions[0]["attribution"] == "run", sessions
+assert sessions[0]["actions"]["skipped"] == 1, sessions
+'
+}
+
 @test "mo history orders sessions started in the same second by their markers" {
     cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
 # ========== clean session started at 2026-05-24 10:00:00 ==========
