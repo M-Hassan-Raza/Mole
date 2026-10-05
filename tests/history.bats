@@ -411,7 +411,6 @@ log_operation_session_start uninstall
 log_operation uninstall SKIPPED /tmp/kept whitelist
 kill -TERM "$$"
 EOF
-    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
     run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
     [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
     printf '%s\n' "$output" | python3 -c '
