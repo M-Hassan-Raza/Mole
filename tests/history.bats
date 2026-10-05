@@ -310,6 +310,97 @@ assert sum(s["actions"]["failed"] for s in sessions) == 1, sessions
     [[ "$output" == *"legacy run attribution uncertain"* ]] || return 1
 }
 
+@test "ending a session with logging disabled releases its operation ownership" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+log_operation_session_start clean
+log_operation clean REMOVED /tmp/inside 1KB
+MO_NO_OPLOG=1 log_operation_session_end clean 1 1
+log_operation clean SKIPPED /tmp/outside whitelist
+EOF
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 2, sessions
+identified, = [s for s in sessions if s["run_id"]]
+legacy, = [s for s in sessions if not s["run_id"]]
+assert not identified["ended_at"], identified
+assert identified["actions"]["removed"] == 1, identified
+assert identified["actions"]["skipped"] == 0, identified
+assert legacy["actions"]["skipped"] == 1, legacy
+assert legacy["operation_count"] == 1, legacy
+'
+}
+
+@test "new child invocations own a fresh run while interrupted parents keep their actions" {
+    run env HOME="$HOME" PROJECT_ROOT="$PROJECT_ROOT" /bin/bash --noprofile --norc <<'EOF'
+set -euo pipefail
+source "$PROJECT_ROOT/lib/core/common.sh"
+get_timestamp() { printf '2026-05-24 10:00:00\n'; }
+log_operation_session_start clean
+log_operation clean REMOVED /tmp/parent 1KB
+/bin/bash --noprofile --norc -c '
+    source "$PROJECT_ROOT/lib/core/common.sh"
+    log_operation_session_start clean
+    log_operation clean FAILED /tmp/child "permission denied"
+    log_operation_session_end clean 0 0
+'
+log_operation clean SKIPPED /tmp/parent-kept whitelist
+kill -TERM "$$"
+EOF
+    [[ "$status" -eq 143 ]] || { echo "$output"; return 1; }
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 2, sessions
+parent, = [s for s in sessions if not s["ended_at"]]
+child, = [s for s in sessions if s["ended_at"]]
+assert parent["run_id"] and parent["run_id"] != child["run_id"], sessions
+assert parent["actions"]["removed"] == 1, parent
+assert parent["actions"]["skipped"] == 1, parent
+assert parent["actions"]["failed"] == 0, parent
+assert child["actions"]["failed"] == 1, child
+assert child["operation_count"] == 1, child
+'
+}
+
+@test "mo history retains identified runs across missing markers and ignores malformed identities" {
+    cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
+[2026-05-24 10:00:01] [clean run=left] REMOVED /tmp/first (1KB)
+# ========== purge session started at 2026-05-24 10:01:00 ==========
+[2026-05-24 10:01:01] [purge] TRASHED /tmp/legacy (1KB)
+# ========== clean run=right session started at 2026-05-24 10:02:00 ==========
+[2026-05-24 10:02:01] [clean run=right] FAILED /tmp/second (permission denied)
+[2026-05-24 10:02:02] [clean run=] REMOVED /tmp/invalid-empty
+[2026-05-24 10:02:03] [clean run=bad token] REMOVED /tmp/invalid-space
+# ========== clean run=right session ended at 2026-05-24 10:03:00, 0 items, 0B ==========
+# ========== purge session ended at 2026-05-24 10:04:00, 1 items, 1KB ==========
+# ========== clean run=left session ended at 2026-05-24 10:05:00, 1 items, 1KB ==========
+EOF
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 3, sessions
+by_id = {s["run_id"]: s for s in sessions}
+assert set(by_id) == {"left", "right", ""}, sessions
+assert by_id["left"]["actions"]["removed"] == 1, sessions
+assert by_id["left"]["ended_at"] == "2026-05-24 10:05:00", sessions
+assert by_id["right"]["actions"]["failed"] == 1, sessions
+assert by_id["right"]["actions"]["removed"] == 0, sessions
+assert by_id[""]["actions"]["trashed"] == 1, sessions
+assert by_id[""]["attribution"] == "command", sessions
+assert sum(s["operation_count"] for s in sessions) == 3, sessions
+'
+}
+
 @test "mo history orders sessions started in the same second by their markers" {
     cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
 # ========== clean session started at 2026-05-24 10:00:00 ==========

@@ -285,9 +285,14 @@ log_operation_session_start() {
 
 # shellcheck disable=SC2329
 log_operation_session_end() {
+    local command="${1:-mole}" log_command
+    operation_log_command log_command "$command"
+    # Ownership ends even when the optional end marker is disabled or fails.
+    if [[ "$command" == "$_MOLE_OPLOG_RUN_COMMAND" ]]; then
+        export _MOLE_OPLOG_RUN_ID="" _MOLE_OPLOG_RUN_COMMAND=""
+    fi
     oplog_enabled || return 0
 
-    local command="${1:-mole}"
     local items="${2:-0}"
     local size="${3:-0}"
     local timestamp
@@ -300,14 +305,9 @@ log_operation_session_end() {
         size_human="0B"
     fi
 
-    local log_command
-    operation_log_command log_command "$command"
     append_log_line \
         "$OPERATIONS_LOG_FILE" \
         "# ========== $log_command session ended at $timestamp, $items items, $size_human =========="
-    if [[ "$command" == "$_MOLE_OPLOG_RUN_COMMAND" ]]; then
-        export _MOLE_OPLOG_RUN_ID="" _MOLE_OPLOG_RUN_COMMAND=""
-    fi
 }
 
 # Enhanced debug logging for operations
