@@ -2649,15 +2649,28 @@ _batch_execute_removals() {
                 echo -e "${GREEN}${ICON_SUCCESS}${NC} [$current_index/${#app_details[@]}] ${app_name}"
             fi
 
-            # Preview survivors are expected; only recorded refusals need explanation.
-            if is_uninstall_dry_run && [[ ${#_MOLE_UNINSTALL_REFUSAL_PATHS[@]} -gt 0 ]]; then
-                leftover_paths=("${_MOLE_UNINSTALL_REFUSAL_PATHS[@]}")
-            fi
+            # Include retained ownership refusals from every removal pass once.
+            # Previews still explain every refusal, excluding expected survivors.
+            local refusal_path refusal_index
+            for ((refusal_index = 0; refusal_index < ${#_MOLE_UNINSTALL_REFUSAL_PATHS[@]}; refusal_index++)); do
+                refusal_path="${_MOLE_UNINSTALL_REFUSAL_PATHS[$refusal_index]}"
+                if ! is_uninstall_dry_run; then
+                    case "${_MOLE_UNINSTALL_REFUSAL_REASONS[$refusal_index]}" in
+                        ownership-unverified | app-reappeared) ;;
+                        *) continue ;;
+                    esac
+                    [[ -e "$refusal_path" || -L "$refusal_path" ]] || continue
+                fi
+                if [[ ${#leftover_paths[@]} -eq 0 ]] ||
+                    ! mole_identity_in_list "$refusal_path" "${leftover_paths[@]}"; then
+                    leftover_paths+=("$refusal_path")
+                fi
+            done
 
             # Warn about files that could not be removed and exclude them from freed total.
             if [[ ${#leftover_paths[@]} -gt 0 ]]; then
                 for _lpath in "${leftover_paths[@]}"; do
-                    local kept_reason="" refusal_index
+                    local kept_reason=""
                     for ((refusal_index = 0; refusal_index < ${#_MOLE_UNINSTALL_REFUSAL_PATHS[@]}; refusal_index++)); do
                         if [[ "${_MOLE_UNINSTALL_REFUSAL_PATHS[$refusal_index]}" == "$_lpath" ]]; then
                             kept_reason="${_MOLE_UNINSTALL_REFUSAL_REASONS[$refusal_index]}"
