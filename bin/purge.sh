@@ -272,7 +272,7 @@ perform_purge() {
             ;;
     esac
 
-    # Finalize every handled outcome. Signals and sink timeouts exit above.
+    # Finalize handled outcomes; nonzero returns exit above under errexit.
     log_operation_session_end "purge" "$total_items_cleaned" "$total_size_cleaned" "$history_outcome"
     if [[ -n "$early_exit" ]]; then
         return "$early_exit"
