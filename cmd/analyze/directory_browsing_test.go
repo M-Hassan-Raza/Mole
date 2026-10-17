@@ -162,3 +162,30 @@ func BenchmarkDirectoryBrowsing(b *testing.B) {
 		}
 	})
 }
+
+func TestCompletedListingCacheDuringDeletion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entries := make([]dirEntry, 10000)
+	for i := range entries {
+		name := fmt.Sprintf("entry-%05d", i)
+		entries[i] = dirEntry{Name: name, Path: filepath.Join(root, name), Size: 1}
+	}
+	for range 100 {
+		m := newModel(root, false)
+		m.finishLiveScan(scanResult{Entries: entries, TotalSize: int64(len(entries)), TotalFiles: int64(len(entries))})
+		updated, _ := m.Update(deleteProgressMsg{done: true, count: 1, path: entries[0].Path})
+		m = updated.(model)
+		m.cancelBackgroundCacheWrites(nil)
+		if len(m.entries) != len(entries)-1 || m.entries[0].Path == entries[0].Path {
+			t.Fatal("deletion completion did not remove the row from the view")
+		}
+		if _, err := loadCacheFromDisk(root); !os.IsNotExist(err) {
+			t.Fatalf("deleted listing's cache survived invalidation: %v", err)
+		}
+	}
+}

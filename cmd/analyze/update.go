@@ -248,7 +248,12 @@ func (m *model) finishLiveScan(result scanResult) {
 	} else if selectedPath != "" {
 		m.selectEntryPath(selectedPath)
 	}
-	m.cache[m.path] = historyEntryFromScanResult(m.path, result, m.cache[m.path], false)
+	cached := historyEntryFromScanResult(m.path, result, m.cache[m.path], false)
+	m.cache[m.path] = cached
+	// The view mutates its backing arrays when rows are removed. The writer
+	// shares the immutable history snapshot instead of racing those changes.
+	result.Entries = cached.Entries
+	result.LargeFiles = cached.LargeFiles
 	publication := m.newBackgroundCacheWrite(context.Background(), m.path)
 	if m.scanState == scanComplete && m.totalSize > 0 {
 		if m.overviewSizeCache == nil {
