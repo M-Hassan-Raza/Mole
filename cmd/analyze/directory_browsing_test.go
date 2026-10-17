@@ -189,3 +189,39 @@ func TestCompletedListingCacheDuringDeletion(t *testing.T) {
 		}
 	}
 }
+
+func TestDirectoryRowsStayAlignedBeyondTwoDigitIndexes(t *testing.T) {
+	m := model{path: "/fixture", width: 120, height: 8, selected: -1, totalSize: 10000}
+	for i := range 10000 {
+		name := fmt.Sprintf("entry-%05d", i)
+		m.entries = append(m.entries, dirEntry{Name: name, Path: "/fixture/" + name, Size: 1})
+	}
+	for _, withHints := range []bool{false, true} {
+		if withHints {
+			for i := range m.entries {
+				m.entries[i].LastAccess = time.Now().Add(-120 * 24 * time.Hour)
+			}
+		}
+		for _, width := range []int{80, 120, 140} {
+			m.width = width
+			short := m
+			short.entries = m.entries[:2]
+			short.offset = 0
+			rowWidth := ansi.StringWidth(rowContaining(ansi.Strip(short.View()), short.entries[0].Name))
+			for _, offset := range []int{98, 998, 9998} {
+				m.offset = offset
+				view := ansi.Strip(m.View())
+				first := rowContaining(view, m.entries[offset].Name)
+				second := rowContaining(view, m.entries[offset+1].Name)
+				firstPrefix, _, firstOK := strings.Cut(first, "  |  ")
+				secondPrefix, _, secondOK := strings.Cut(second, "  |  ")
+				if !firstOK || !secondOK || ansi.StringWidth(firstPrefix) != ansi.StringWidth(secondPrefix) {
+					t.Fatalf("row numbers shifted the columns at %d:\n%s\n%s", offset+1, first, second)
+				}
+				if ansi.StringWidth(first) > rowWidth || ansi.StringWidth(second) > rowWidth {
+					t.Fatalf("row numbers widened the rows at %d:\n%s\n%s", offset+1, first, second)
+				}
+			}
+		}
+	}
+}
