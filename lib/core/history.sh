@@ -357,15 +357,11 @@ history_start_session() {
 history_finish_session() {
     [[ -z "$HISTORY_ACTIVE_COMMAND" ]] && return 0
 
-    # Only a valid end marker supplies terminal metadata. Open and older runs
-    # stay unknown; action counts are never used to guess their result.
-    local outcome="${1:-unknown}" mode="${2:-unknown}"
-
     HISTORY_SESSION_COMMANDS+=("$HISTORY_ACTIVE_COMMAND")
     HISTORY_SESSION_RUN_IDS+=("$HISTORY_ACTIVE_RUN_ID")
     HISTORY_SESSION_AMBIGUOUS+=("$HISTORY_ACTIVE_AMBIGUOUS")
-    HISTORY_SESSION_OUTCOMES+=("$outcome")
-    HISTORY_SESSION_MODES+=("$mode")
+    HISTORY_SESSION_OUTCOMES+=(unknown)
+    HISTORY_SESSION_MODES+=(unknown)
     HISTORY_SESSION_STARTED_AT+=("$HISTORY_ACTIVE_STARTED_AT")
     HISTORY_SESSION_ENDED_AT+=("$HISTORY_ACTIVE_ENDED_AT")
     HISTORY_SESSION_ITEMS+=("$HISTORY_ACTIVE_ITEMS")
@@ -440,7 +436,6 @@ history_parse_session_start() {
 history_parse_session_end() {
     local line="$1"
     local inner command rest ended_at tail items size
-    local outcome=unknown mode=unknown metadata
 
     case "$line" in
         "# ========== "*" session ended at "*" ==========") ;;
@@ -463,15 +458,6 @@ history_parse_session_end() {
         fi
     fi
 
-    if [[ "$size" == *", outcome="* ]]; then
-        metadata="${size#*, outcome=}"
-        size="${size%%, outcome=*}"
-        [[ "$metadata" == *", mode="* ]] || return 1
-        outcome="${metadata%%, mode=*}"
-        mode="${metadata#*, mode=}"
-        operation_log_result_valid "$outcome" "$mode" || return 1
-    fi
-
     history_finish_unmarked_sessions "$HISTORY_LOG_COMMAND"
     if ! history_activate_session "$HISTORY_LOG_COMMAND" "$HISTORY_LOG_RUN_ID"; then
         history_start_session "$HISTORY_LOG_COMMAND" "$ended_at" 0 "$HISTORY_LOG_RUN_ID"
@@ -480,8 +466,37 @@ history_parse_session_end() {
     HISTORY_ACTIVE_ENDED_AT="$ended_at"
     [[ "$items" =~ ^[0-9]+$ ]] && HISTORY_ACTIVE_ITEMS="$items"
     [[ -n "$size" ]] && HISTORY_ACTIVE_SIZE="$size"
-    history_finish_session "$outcome" "$mode"
+    history_finish_session
     return 0
+}
+
+history_parse_session_result() {
+    local line="$1" inner metadata outcome mode idx
+    case "$line" in
+        "# ========== "*" session result: outcome="*" ==========") ;;
+        *) return 1 ;;
+    esac
+    inner="${line#"# ========== "}"
+    history_parse_command "${inner%% session result: *}" || return 1
+    [[ -n "$HISTORY_LOG_RUN_ID" ]] || return 1
+    metadata="${inner#* session result: outcome=}"
+    metadata="${metadata%" =========="}"
+    [[ "$metadata" == *", mode="* ]] || return 1
+    outcome="${metadata%%, mode=*}"
+    mode="${metadata#*, mode=}"
+    operation_log_result_valid "$outcome" "$mode" || return 1
+
+    # A result never creates or closes a session. Require its exact completed
+    # identity, even when another run wrote between the end and result records.
+    for ((idx = ${#HISTORY_SESSION_COMMANDS[@]} - 1; idx >= 0; idx--)); do
+        [[ "${HISTORY_SESSION_COMMANDS[$idx]}" == "$HISTORY_LOG_COMMAND" &&
+            "${HISTORY_SESSION_RUN_IDS[$idx]}" == "$HISTORY_LOG_RUN_ID" &&
+            -n "${HISTORY_SESSION_ENDED_AT[$idx]}" ]] || continue
+        HISTORY_SESSION_OUTCOMES[idx]="$outcome"
+        HISTORY_SESSION_MODES[idx]="$mode"
+        return 0
+    done
+    return 1
 }
 
 history_parse_operation_line() {
@@ -549,6 +564,7 @@ history_load_operations() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         history_parse_session_start "$line" && continue
         history_parse_session_end "$line" && continue
+        history_parse_session_result "$line" && continue
         history_parse_operation_line "$line" && continue
     done < "$log_file"
 

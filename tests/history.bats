@@ -243,26 +243,57 @@ assert all(s["run_id"] and s["actions"]["skipped"] == 1 for s in sessions), sess
     [[ "$output" == *"completed (dry-run)"* && "$output" == *"interrupted (run)"* ]] || return 1
 }
 
-@test "malformed terminal metadata cannot close an identified run" {
+@test "history ignores malformed and unfinalized result records" {
     cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
 # ========== clean run=bad-outcome session started at 2026-05-24 10:00:00 ==========
 [2026-05-24 10:00:01] [clean run=bad-outcome] SKIPPED /tmp/one (whitelist)
-# ========== clean run=bad-outcome session ended at 2026-05-24 10:00:02, 1 items, 1KB, outcome=bogus, mode=run ==========
+# ========== clean run=bad-outcome session ended at 2026-05-24 10:00:02, 1 items, 1KB ==========
+# ========== clean run=bad-outcome session result: outcome=bogus, mode=run ==========
 # ========== clean run=bad-mode session started at 2026-05-24 10:01:00 ==========
 [2026-05-24 10:01:01] [clean run=bad-mode] SKIPPED /tmp/two (whitelist)
-# ========== clean run=bad-mode session ended at 2026-05-24 10:01:02, 1 items, 1KB, outcome=completed, mode=bogus ==========
+# ========== clean run=bad-mode session ended at 2026-05-24 10:01:02, 1 items, 1KB ==========
+# ========== clean run=bad-mode session result: outcome=completed, mode=bogus ==========
 # ========== clean run=missing-mode session started at 2026-05-24 10:02:00 ==========
 [2026-05-24 10:02:01] [clean run=missing-mode] SKIPPED /tmp/three (whitelist)
-# ========== clean run=missing-mode session ended at 2026-05-24 10:02:02, 1 items, 1KB, outcome=completed ==========
+# ========== clean run=missing-mode session ended at 2026-05-24 10:02:02, 1 items, 1KB ==========
+# ========== clean run=missing-mode session result: outcome=completed ==========
+# ========== clean run=unfinished session started at 2026-05-24 10:03:00 ==========
+[2026-05-24 10:03:01] [clean run=unfinished] SKIPPED /tmp/four (whitelist)
+# ========== clean run=unfinished session result: outcome=completed, mode=run ==========
 EOF
     run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
     [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
     printf '%s\n' "$output" | python3 -c '
 import json, sys
 sessions = json.load(sys.stdin)["sessions"]
-assert len(sessions) == 3 and all(not s["ended_at"] for s in sessions), sessions
+assert len(sessions) == 4, sessions
+assert all(bool(s["ended_at"]) == (s["run_id"] != "unfinished") for s in sessions), sessions
 assert all(s["outcome"] == "unknown" and s["mode"] == "unknown" for s in sessions), sessions
 assert all(s["run_id"] and s["actions"]["skipped"] == 1 for s in sessions), sessions
+'
+}
+
+@test "history attaches interleaved results only to their finalized run" {
+    cat > "$HOME/Library/Logs/mole/operations.log" <<'EOF'
+# ========== clean run=one session started at 2026-05-24 10:00:00 ==========
+# ========== clean run=two session started at 2026-05-24 10:00:01 ==========
+# ========== clean run=one session ended at 2026-05-24 10:00:02, 1 items, 1KB ==========
+# ========== clean run=two session ended at 2026-05-24 10:00:03, 2 items, 2KB ==========
+# ========== clean run=one session result: outcome=cancelled, mode=run ==========
+# ========== clean run=two session result: outcome=incomplete, mode=run ==========
+# ========== purge run=one session result: outcome=completed, mode=run ==========
+# ========== clean run=absent session result: outcome=completed, mode=run ==========
+EOF
+    run env HOME="$HOME" "$PROJECT_ROOT/mole" history --json
+    [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
+    printf '%s\n' "$output" | python3 -c '
+import json, sys
+sessions = json.load(sys.stdin)["sessions"]
+assert len(sessions) == 2, sessions
+by_run = {s["run_id"]: s for s in sessions}
+assert by_run["one"]["outcome"] == "cancelled" and by_run["one"]["items"] == 1, sessions
+assert by_run["two"]["outcome"] == "incomplete" and by_run["two"]["items"] == 2, sessions
+assert all(s["ended_at"] and s["mode"] == "run" and s["operation_count"] == 0 for s in sessions), sessions
 '
 }
 
@@ -310,16 +341,16 @@ set -euo pipefail
 source "$PROJECT_ROOT/lib/core/common.sh"
 MOLE_DRY_RUN=1 log_operation_session_start clean
 log_operation clean SKIPPED /tmp/preview "dry-run stub-container"
-log_operation_session_end clean 1 4
+log_operation_session_end clean 1 4 completed
 log_operation_session_start clean
 log_operation clean REMOVED /tmp/real 4KB
-log_operation_session_end clean 1 4
+log_operation_session_end clean 1 4 incomplete
 EOF
     [[ "$status" -eq 0 ]] || { echo "$output"; return 1; }
     local log_file="$HOME/Library/Logs/mole/operations.log"
     run python3 - "$log_file" <<'EOF'
 import re, sys
-lines = [l for l in open(sys.argv[1]).read().splitlines() if l]
+lines = [l for l in open(sys.argv[1]).read().splitlines() if l and " session result: " not in l]
 # The shapes Mole-Diagnose.command keeps; a marker outside them is dropped.
 row = re.compile(r'^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\] \[([a-z][a-z0-9._-]*(?: run=[0-9-]+)?)\] ([A-Z][A-Z_]*) (.+)$')
 marker = re.compile(r'^# =+ [a-z][a-z0-9._-]*(?: run=[0-9-]+)? session (?:started|ended) at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d(?:, \d+ items, \d+(?:\.\d+)?[KMGT]?B)? =+$')
@@ -339,6 +370,9 @@ EOF
 import json, sys
 sessions = json.load(sys.stdin)["sessions"]
 assert sorted(s["command"] for s in sessions) == ["clean", "clean-dry-run"], sessions
+by_command = {s["command"]: s for s in sessions}
+assert by_command["clean-dry-run"]["mode"] == "dry-run" and by_command["clean-dry-run"]["outcome"] == "completed", sessions
+assert by_command["clean"]["mode"] == "run" and by_command["clean"]["outcome"] == "incomplete", sessions
 '
 }
 

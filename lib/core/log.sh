@@ -336,20 +336,18 @@ log_operation_session_start() {
 
 # shellcheck disable=SC2329
 log_operation_session_end() {
-    local command="${1:-mole}" log_command
+    local command="${1:-mole}" log_command mode=run
     operation_log_command log_command "$command"
     # Ownership ends even when the optional end marker is disabled or fails.
     if [[ "$command" == "$_MOLE_OPLOG_RUN_COMMAND" ]]; then
+        [[ "$_MOLE_OPLOG_RUN_DRY" == 1 ]] && mode=dry-run
         export _MOLE_OPLOG_RUN_ID="" _MOLE_OPLOG_RUN_COMMAND="" _MOLE_OPLOG_RUN_DRY=""
     fi
     # Optional terminal metadata comes from the command's existing outcome.
     # Ends without an outcome retain their format and stay unknown in history.
-    local outcome="${4:-}" metadata=""
+    local outcome="${4:-}"
     if [[ -n "$outcome" ]]; then
-        local mode=run
-        [[ "${MOLE_DRY_RUN:-0}" == 1 ]] && mode=dry-run
         operation_log_result_valid "$outcome" "$mode" || return 1
-        metadata=", outcome=$outcome, mode=$mode"
     fi
     oplog_enabled || return 0
 
@@ -365,9 +363,15 @@ log_operation_session_end() {
         size_human="0B"
     fi
 
-    append_log_line \
-        "$OPERATIONS_LOG_FILE" \
-        "# ========== $log_command session ended at $timestamp, $items items, $size_human$metadata =========="
+    local end_marker="# ========== $log_command session ended at $timestamp, $items items, $size_human =========="
+    if [[ -n "$outcome" && "$log_command" == *" run="* ]]; then
+        # Keep the end marker readable by older readers and support diagnostics.
+        # Only an identified, finalized run can carry a separate result record.
+        append_log_lines "$OPERATIONS_LOG_FILE" "$end_marker" \
+            "# ========== $log_command session result: outcome=$outcome, mode=$mode =========="
+    else
+        append_log_line "$OPERATIONS_LOG_FILE" "$end_marker"
+    fi
 }
 
 # Enhanced debug logging for operations
